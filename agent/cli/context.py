@@ -8,6 +8,7 @@ from pathlib import Path
 from agent import Agent
 from agent.cli import config as config_mod
 from agent.cli.output import OutputFormat
+from agent.decision import apply_preference
 
 
 @dataclass
@@ -20,6 +21,12 @@ class CliContext:
     def agent(self) -> Agent:
         config_mod.export_env(self.cfg)
         return Agent(config=config_mod.agent_config(self.cfg))
+
+    def with_preference(self, preference_name: str | None) -> "CliContext":
+        if not preference_name:
+            return self
+        cfg = apply_preference(self.cfg, preference_name)
+        return CliContext(output=self.output, config_path=self.config_path, agent_name=self.agent_name, cfg=cfg)
 
     @property
     def effective_agent_name(self) -> str:

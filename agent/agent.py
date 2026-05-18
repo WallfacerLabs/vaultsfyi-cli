@@ -143,6 +143,49 @@ class Agent:
             "opportunities_count": len(opportunities),
         }
 
+    def prepare_deploy_to_vault(self, vault_address: str, amount_usd: float) -> dict:
+        """Build a deployment plan to a specific validated vault address."""
+        is_sufficient, error_msg = self.executor.validate_gas_balance()
+        if not is_sufficient:
+            raise ValueError(error_msg)
+
+        idle_info = self.get_idle_assets()
+        idle_usdc = idle_info["usdc_balance"]
+        if amount_usd > idle_usdc:
+            raise ValueError(f"Deploy amount {format_usd(amount_usd)} exceeds idle balance {format_usd(idle_usdc)}")
+        if amount_usd < self.min_deposit_usd:
+            raise ValueError(
+                f"Deposit amount {format_usd(amount_usd, self.display_decimals)} "
+                f"below minimum {format_usd(self.min_deposit_usd, self.display_decimals)}"
+            )
+
+        opportunities = self.get_opportunities()
+        selected_vault = next((v for v in opportunities if v["vault_address"].lower() == vault_address.lower()), None)
+        if selected_vault is None:
+            raise ValueError(f"Vault {vault_address} is not in the current eligible opportunity set")
+
+        transactions = self.transaction_api.generate_deposit_tx(
+            self.wallet.address,
+            selected_vault["vault_address"],
+            amount_usd,
+            self.asset_address,
+            self.network,
+        )
+
+        from .utils import increase_approval_buffer
+
+        transactions = increase_approval_buffer(transactions, buffer_percent=10.0)
+        return {
+            "action": "deploy_idle",
+            "wallet": self.wallet.address,
+            "amount_usd": amount_usd,
+            "amount_tokens": amount_usd,
+            "vault": selected_vault,
+            "reason": f"Deploying to validated target {selected_vault['vault_name']}",
+            "transactions": transactions,
+            "transaction_count": len(transactions),
+        }
+
     def execute_deploy_plan(self, plan: dict) -> dict:
         """Broadcast a prepared deployment plan."""
         tx_hashes = self.executor.execute_multiple(plan["transactions"])
@@ -184,6 +227,20 @@ class Agent:
             "transactions": transactions,
             "transaction_count": len(transactions),
         }
+
+    def prepare_redeem_by_vault(self, vault_address: str, amount_usd: float | None = None, percentage: float | None = None) -> dict:
+        """Build a redemption plan for a specific position vault address."""
+        positions = self.get_positions()
+        position = next((p for p in positions if p["vault_address"].lower() == vault_address.lower()), None)
+        if position is None:
+            raise ValueError(f"Position vault '{vault_address}' not found")
+
+        if amount_usd is not None:
+            if amount_usd > position["balance_usd"]:
+                raise ValueError(f"Redeem amount {format_usd(amount_usd)} exceeds position balance {format_usd(position['balance_usd'])}")
+            percentage = (amount_usd / position["balance_usd"]) * 100 if position["balance_usd"] else 0
+        percentage = 100.0 if percentage is None else percentage
+        return self.prepare_redeem(position["nickname"], percentage)
 
     def execute_redeem_plan(self, plan: dict) -> dict:
         """Broadcast a prepared redemption plan."""

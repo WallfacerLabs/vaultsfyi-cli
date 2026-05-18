@@ -191,3 +191,44 @@ def test_agent_run_dry_run_json(monkeypatch, tmp_path):
     assert data["agent"] == "conservative"
     assert data["wallet"] == "ows-conservative"
     assert data["plan"]["status"] == "dry_run"
+
+
+def test_preference_init_set_and_list(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    result = runner.invoke(app, ["-o", "json", "preference", "init", "blue-chip"])
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["name"] == "blue-chip"
+
+    result = runner.invoke(app, ["preference", "set", "blue-chip", "min_tvl", "10000000"])
+    assert result.exit_code == 0
+
+    result = runner.invoke(app, ["-o", "json", "preference", "list"])
+    rows = json.loads(result.stdout)
+    assert rows[0]["name"] == "blue-chip"
+    assert rows[0]["min_tvl"] == 10_000_000
+
+
+def test_decision_packet_and_validate(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setattr(CliContext, "agent", fake_agent)
+    runner.invoke(app, ["preference", "init", "blue-chip"])
+
+    result = runner.invoke(app, ["-o", "json", "decision-packet", "--preference", "blue-chip"])
+    assert result.exit_code == 0
+    packet = json.loads(result.stdout)
+    assert packet["schema_version"] == "vaultsfyi.decision-packet.v1"
+    assert packet["candidate_actions"][0]["id"] == "hold"
+
+    packet_path = tmp_path / "packet.json"
+    decision_path = tmp_path / "decision.json"
+    packet_path.write_text(json.dumps(packet))
+    decision_path.write_text(json.dumps({"schema_version": "vaultsfyi.decision.v1", "candidate_id": "hold", "action": "hold"}))
+
+    result = runner.invoke(app, ["-o", "json", "validate-decision", str(decision_path), "--packet", str(packet_path)])
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["valid"] is True
+
+    decision_path.write_text(json.dumps({"schema_version": "vaultsfyi.decision.v1", "candidate_id": "made-up", "action": "deploy_idle"}))
+    result = runner.invoke(app, ["-o", "json", "validate-decision", str(decision_path), "--packet", str(packet_path)])
+    assert result.exit_code != 0
+    assert json.loads(result.stdout)["valid"] is False

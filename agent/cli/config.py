@@ -57,6 +57,18 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "slippage_bps": 50,
         "cooldown_after_tx": "10m",
     },
+    "decision": {
+        "min_net_gain_usd": 1.0,
+        "max_breakeven_days": 30,
+        "min_apy_improvement": 0.01,
+        "max_rebalance_pct": 50,
+        "allow_partial_rebalance": True,
+        "prefer_hold_if_uncertain": True,
+        "eth_usd_price": 3000.0,
+        "deposit_gas_units": 350000,
+        "redeem_gas_units": 500000,
+    },
+    "preferences": {},
     "display": {
         "decimals": 2,
         "position_retry_attempts": 3,
@@ -166,6 +178,12 @@ def write_config(cfg: dict[str, Any], config_path: Path | None = None) -> Path:
     return path
 
 
+def write_toml_path(path: Path, cfg: dict[str, Any]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(tomli_w.dumps(_toml_safe(cfg)))
+    return path
+
+
 def write_agent_profile(agent_name: str, cfg: dict[str, Any]) -> Path:
     path = agent_config_path(agent_name)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -197,6 +215,32 @@ def list_agent_profiles() -> list[dict[str, Any]]:
             "path": str(path),
         })
     return rows
+
+
+def new_preference() -> dict[str, Any]:
+    return {
+        "min_tvl": 1_000_000,
+        "min_apy": 0.01,
+        "max_apy": None,
+        "only_transactional": True,
+        "vault_whitelist": [],
+        "allowed_protocols": [],
+        "blocked_protocols": [],
+        "allowed_curators": [],
+    }
+
+
+def list_preferences(cfg: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            "name": name,
+            "min_apy": pref.get("min_apy"),
+            "max_apy": pref.get("max_apy"),
+            "min_tvl": pref.get("min_tvl"),
+            "only_transactional": pref.get("only_transactional", True),
+        }
+        for name, pref in sorted(cfg.get("preferences", {}).items())
+    ]
 
 
 def new_agent_profile(agent_name: str, wallet_name: str | None = None, mode: str = "dry-run") -> dict[str, Any]:

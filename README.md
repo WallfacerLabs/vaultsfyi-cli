@@ -9,10 +9,24 @@ The CLI binary is `vaultsfyi`.
 - Checks wallet gas, idle USDC, and vault positions on Base
 - Finds filtered USDC deposit opportunities through vaults.fyi
 - Selects the highest-yield eligible vault while avoiding existing positions
-- Generates and broadcasts approve/deposit and redeem transactions
+- Supports reusable preference filters for vault eligibility
+- Emits decision packets for OpenClaw or another external allocator
+- Validates allocator decisions before planning or execution
+- Generates and broadcasts approve/deposit/redeem transactions through OWS
 - Supports human table output and machine-readable JSON
 - Provides an interactive command shell
 - Keeps the Python API available: `from agent import Agent`
+
+## Documentation
+
+- [Single-agent / single-wallet usage](docs/single-agent.md)
+- [Human operator workflows](docs/human-usage.md)
+- [Multi-agent profiles](docs/multi-agent.md)
+- [Preferences and hard filters](docs/preferences.md)
+- [Decision packet and validation model](docs/decisions.md)
+- [OpenClaw allocator workflow](docs/openclaw.md)
+- [Command reference](docs/commands.md)
+- [Safety model](docs/safety.md)
 
 ## Wallet model
 
@@ -33,8 +47,6 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -e '.[test]'
 ```
-
-If the GitHub repo has not been renamed yet, clone the current repo/branch and run the same install command.
 
 Install the OWS CLI if you want x402-paid requests without a vaults.fyi API key:
 
@@ -94,7 +106,9 @@ vaultsfyi status                    # wallet, gas, idle USDC, position count
 vaultsfyi idle                      # idle USDC only
 vaultsfyi positions                 # active positions
 vaultsfyi opportunities             # deposit opportunities
+vaultsfyi opportunities --preference blue-chip
 vaultsfyi deploy --percent 10       # deploy 10% of idle USDC
+vaultsfyi deploy --percent 10 --preference blue-chip
 vaultsfyi redeem --position NAME    # redeem a position by nickname
 vaultsfyi redeem-all                # redeem all active positions
 vaultsfyi shell                     # interactive command shell
@@ -106,6 +120,15 @@ vaultsfyi wallet address
 vaultsfyi config path
 vaultsfyi config show
 vaultsfyi config set vaults.api_key YOUR_KEY
+
+vaultsfyi preference init blue-chip
+vaultsfyi preference list
+vaultsfyi preference set blue-chip min_tvl 10000000
+
+vaultsfyi decision-packet --preference blue-chip -o json
+vaultsfyi validate-decision decision.json --packet packet.json
+vaultsfyi plan-decision decision.json --packet packet.json
+vaultsfyi execute-decision decision.json --packet packet.json --yes
 ```
 
 Global flags:
@@ -192,6 +215,27 @@ deploy_percent = 10.0
 require_confirmation = true
 slippage_bps = 50
 cooldown_after_tx = "10m"
+
+[decision]
+min_net_gain_usd = 1.0
+max_breakeven_days = 30
+min_apy_improvement = 0.01
+max_rebalance_pct = 50
+allow_partial_rebalance = true
+prefer_hold_if_uncertain = true
+eth_usd_price = 3000.0
+deposit_gas_units = 350000
+redeem_gas_units = 500000
+
+[preferences.blue-chip]
+min_tvl = 10000000
+min_apy = 0.02
+max_apy = 0.15
+only_transactional = true
+allowed_protocols = ["aave", "morpho", "euler"]
+blocked_protocols = []
+allowed_curators = []
+vault_whitelist = []
 
 [display]
 decimals = 2

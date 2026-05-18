@@ -18,14 +18,23 @@ from typer.main import get_command
 from agent.cli import config as config_mod
 from agent.cli.context import CliContext, build_context
 from agent.cli.output import OutputFormat, confirm_or_abort, echo_error, echo_json, format_apy, format_usd, print_table
+from agent.decision import (
+    build_decision_packet,
+    execute_decision,
+    plan_decision,
+    read_json,
+    validate_decision,
+)
 
 app = typer.Typer(help="vaults.fyi DeFi vault manager")
 wallet_app = typer.Typer(help="Manage the configured OWS wallet")
 config_app = typer.Typer(help="Manage vaultsfyi CLI config")
 agent_app = typer.Typer(help="Manage named strategy agents")
+preference_app = typer.Typer(help="Manage reusable vault preference filters")
 app.add_typer(wallet_app, name="wallet")
 app.add_typer(config_app, name="config")
 app.add_typer(agent_app, name="agent")
+app.add_typer(preference_app, name="preference")
 
 
 def _ctx() -> CliContext:
@@ -51,6 +60,8 @@ def _run(fn):
     try:
         return fn(ctx)
     except typer.Abort:
+        raise
+    except typer.Exit:
         raise
     except Exception as exc:
         echo_error(exc, ctx.output)
@@ -152,9 +163,13 @@ def positions():
 
 
 @app.command()
-def opportunities(limit: int = typer.Option(10, "--limit", "-l", help="Max rows to show")):
+def opportunities(
+    limit: int = typer.Option(10, "--limit", "-l", help="Max rows to show"),
+    preference: Optional[str] = typer.Option(None, "--preference", "-p", help="Optional named preference filter"),
+):
     """Show current deposit opportunities."""
     def inner(ctx: CliContext):
+        ctx = ctx.with_preference(preference)
         data = ctx.agent().get_opportunities()[:limit]
         if ctx.output == OutputFormat.json:
             echo_json(data)
@@ -177,11 +192,13 @@ def opportunities(limit: int = typer.Option(10, "--limit", "-l", help="Max rows 
 @app.command()
 def deploy(
     percent: float = typer.Option(..., "--percent", "-p", help="Percent of idle USDC to deploy"),
+    preference: Optional[str] = typer.Option(None, "--preference", help="Optional named preference filter"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Broadcast without interactive confirmation"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Build and print the plan without broadcasting"),
 ):
     """Deploy a percentage of idle USDC to the selected vault."""
     def inner(ctx: CliContext):
+        ctx = ctx.with_preference(preference)
         agent = ctx.agent()
         deploy_percent = _effective_deploy_percent(ctx, agent, percent)
         plan = agent.prepare_deploy(deploy_percent)
@@ -444,6 +461,146 @@ def agent_compare(names: list[str] = typer.Argument(..., help="Agent profile nam
             echo_json(payload)
         else:
             print_table(rows)
+    _run(inner)
+
+
+@preference_app.command("init")
+def preference_init(name: str = typer.Argument(..., help="Preference name")):
+    """Create a reusable preference filter."""
+    def inner(ctx: CliContext):
+        path = config_mod.agent_config_path(ctx.agent_name) if ctx.agent_name else (ctx.config_path or config_mod.default_config_path())
+        cfg = config_mod.load_toml(path) if path.exists() else {}
+        prefs = cfg.setdefault("preferences", {})
+        if name in prefs:
+            raise ValueError(f"preference '{name}' already exists")
+        prefs[name] = config_mod.new_preference()
+        path = config_mod.write_toml_path(path, cfg)
+        payload = {"name": name, "path": str(path), **prefs[name]}
+        if ctx.output == OutputFormat.json:
+            echo_json(payload)
+        else:
+            print_table([payload])
+    _run(inner)
+
+
+@preference_app.command("list")
+def preference_list():
+    """List reusable preference filters."""
+    ctx = _ctx()
+    rows = config_mod.list_preferences(ctx.cfg)
+    if ctx.output == OutputFormat.json:
+        echo_json(rows)
+    else:
+        print_table(rows)
+
+
+@preference_app.command("show")
+def preference_show(name: str = typer.Argument(..., help="Preference name")):
+    """Show one preference filter."""
+    def inner(ctx: CliContext):
+        pref = ctx.cfg.get("preferences", {}).get(name)
+        if pref is None:
+            raise ValueError(f"preference '{name}' does not exist")
+        payload = {"name": name, **pref}
+        if ctx.output == OutputFormat.json:
+            echo_json(payload)
+        else:
+            print_table([payload])
+    _run(inner)
+
+
+@preference_app.command("set")
+def preference_set(name: str, key: str, value: str):
+    """Set a preference value, e.g. min_tvl 10000000."""
+    def inner(ctx: CliContext):
+        path = config_mod.agent_config_path(ctx.agent_name) if ctx.agent_name else (ctx.config_path or config_mod.default_config_path())
+        cfg = config_mod.load_toml(path) if path.exists() else {}
+        prefs = cfg.setdefault("preferences", {})
+        if name not in prefs:
+            raise ValueError(f"preference '{name}' does not exist")
+        prefs[name][key] = config_mod.parse_config_value(value)
+        path = config_mod.write_toml_path(path, cfg)
+        payload = {"name": name, "key": key, "value": prefs[name][key], "path": str(path)}
+        if ctx.output == OutputFormat.json:
+            echo_json(payload)
+        else:
+            print_table([payload])
+    _run(inner)
+
+
+@app.command("decision-packet")
+def decision_packet(
+    preference: Optional[str] = typer.Option(None, "--preference", "-p", help="Optional named preference filter"),
+    intent: Optional[str] = typer.Option(None, "--intent", help="Allocator intent included in the packet"),
+):
+    """Emit a read-only packet for OpenClaw or another allocator."""
+    def inner(ctx: CliContext):
+        ctx = ctx.with_preference(preference)
+        packet = build_decision_packet(ctx.agent(), ctx.cfg, preference, intent)
+        echo_json(packet)
+    _run(inner)
+
+
+@app.command("validate-decision")
+def validate_decision_cmd(
+    decision: Path = typer.Argument(..., help="Decision JSON file"),
+    packet: Path = typer.Option(..., "--packet", help="Decision packet JSON file"),
+):
+    """Validate an external allocator decision against a packet."""
+    def inner(ctx: CliContext):
+        result = validate_decision(read_json(decision), read_json(packet))
+        if ctx.output == OutputFormat.json:
+            echo_json(result)
+        else:
+            print_table([{"valid": result["valid"], "violations": "; ".join(result["violations"]) or "—"}])
+        if not result["valid"]:
+            raise typer.Exit(1)
+    _run(inner)
+
+
+@app.command("plan-decision")
+def plan_decision_cmd(
+    decision: Path = typer.Argument(..., help="Decision JSON file"),
+    packet: Path = typer.Option(..., "--packet", help="Decision packet JSON file"),
+):
+    """Build an unsigned transaction plan from a validated decision."""
+    def inner(ctx: CliContext):
+        result = plan_decision(ctx.agent(), read_json(decision), read_json(packet))
+        if ctx.output == OutputFormat.json:
+            echo_json(result)
+        else:
+            print_table([{"status": result["status"], "valid": result.get("valid"), "transactions": len(result.get("transactions", []))}])
+        if not result.get("valid"):
+            raise typer.Exit(1)
+    _run(inner)
+
+
+@app.command("execute-decision")
+def execute_decision_cmd(
+    decision: Path = typer.Argument(..., help="Decision JSON file"),
+    packet: Path = typer.Option(..., "--packet", help="Decision packet JSON file"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Broadcast without interactive confirmation"),
+):
+    """Validate, plan, sign, and broadcast a decision through OWS."""
+    def inner(ctx: CliContext):
+        decision_data = read_json(decision)
+        packet_data = read_json(packet)
+        validation = validate_decision(decision_data, packet_data)
+        if not validation["valid"]:
+            if ctx.output == OutputFormat.json:
+                echo_json({"valid": False, "validation": validation, "status": "invalid"})
+            else:
+                print_table([{"status": "invalid", "violations": "; ".join(validation["violations"]) or "—"}])
+            raise typer.Exit(1)
+        confirm_or_abort("Broadcast transaction(s) for this decision?", yes, ctx.output)
+        with _wallet_lock(ctx):
+            result = execute_decision(ctx.agent(), decision_data, packet_data)
+        if ctx.output == OutputFormat.json:
+            echo_json(result)
+        else:
+            print_table([{"status": result["status"], "valid": result.get("valid"), "tx_hashes": ", ".join(result.get("tx_hashes", [])) or "—"}])
+        if not result.get("valid", True):
+            raise typer.Exit(1)
     _run(inner)
 
 
