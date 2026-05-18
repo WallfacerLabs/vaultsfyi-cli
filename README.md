@@ -114,63 +114,9 @@ Global flags:
 vaultsfyi --output table positions
 vaultsfyi -o json positions
 vaultsfyi --config ~/.config/vaultsfyi/config.toml status
-vaultsfyi --agent conservative status
 ```
 
-## Multiple wallets and strategy agents
-
-A named agent profile is a separate strategy configuration that can point at its own OWS wallet. Use this for running conservative, high-yield, protocol-specific, or experimental strategies without mixing wallet state.
-
-Create profiles:
-
-```bash
-vaultsfyi agent init conservative --wallet ows-conservative --mode dry-run
-vaultsfyi agent init high-yield --wallet ows-high-yield --mode dry-run
-vaultsfyi agent list
-```
-
-Create/fund each wallet:
-
-```bash
-vaultsfyi --agent conservative wallet create
-vaultsfyi --agent high-yield wallet create
-vaultsfyi --agent conservative wallet address
-vaultsfyi --agent high-yield wallet address
-```
-
-Tune each profile:
-
-```bash
-vaultsfyi --agent conservative config set strategy.min_apy 0.03
-vaultsfyi --agent conservative config set strategy.max_apy 0.25
-vaultsfyi --agent conservative config set agent.max_deploy_usd 100
-
-vaultsfyi --agent high-yield config set strategy.min_apy 0.08
-vaultsfyi --agent high-yield config set strategy.min_tvl 500000
-```
-
-Run and compare strategies:
-
-```bash
-vaultsfyi --agent conservative opportunities
-vaultsfyi agent run conservative --dry-run
-vaultsfyi agent compare conservative high-yield
-```
-
-Live execution is intentionally explicit:
-
-```bash
-vaultsfyi --agent conservative config set agent.mode live
-vaultsfyi agent run conservative --execute --yes
-```
-
-Live transaction commands take a wallet lock under `~/.local/state/vaultsfyi/locks/` so two processes cannot broadcast from the same OWS wallet at the same time.
-
-Profile files live at:
-
-```text
-~/.config/vaultsfyi/agents/<name>.toml
-```
+`--agent NAME` is optional and only needed when you deliberately use named multi-agent profiles.
 
 ## Interactive shell
 
@@ -325,6 +271,58 @@ and the process exits non-zero.
 - `--dry-run` never broadcasts
 - Gas is checked before transaction generation/execution
 - Failed deposit flows do not revoke approvals automatically
+
+## Optional: multiple wallets and strategy agents
+
+Single-wallet usage does not require any of this. Use named profiles only when you want several isolated strategies or wallets.
+
+A profile is a separate strategy config that points at its own OWS wallet:
+
+```bash
+vaultsfyi agent init conservative --wallet ows-conservative --mode dry-run
+vaultsfyi agent init high-yield --wallet ows-high-yield --mode dry-run
+vaultsfyi agent list
+```
+
+Run ordinary commands through a profile with `--agent`:
+
+```bash
+vaultsfyi --agent conservative wallet create
+vaultsfyi --agent conservative wallet address
+vaultsfyi --agent conservative opportunities
+```
+
+Tune a profile without changing the global config:
+
+```bash
+vaultsfyi --agent conservative config set strategy.min_apy 0.03
+vaultsfyi --agent conservative config set strategy.max_apy 0.25
+vaultsfyi --agent conservative config set agent.max_deploy_usd 100
+```
+
+Compare or dry-run strategy passes:
+
+```bash
+vaultsfyi agent run conservative --dry-run
+vaultsfyi agent compare conservative high-yield
+```
+
+Live execution is intentionally explicit:
+
+```bash
+vaultsfyi --agent conservative config set agent.mode live
+vaultsfyi agent run conservative --execute --yes
+```
+
+Live transaction commands take a wallet lock under `~/.local/state/vaultsfyi/locks/` so two processes cannot broadcast from the same OWS wallet at the same time.
+
+Profile files live at:
+
+```text
+~/.config/vaultsfyi/agents/<name>.toml
+```
+
+Use `vaultsfyi config show --all` or `vaultsfyi agent show NAME` to inspect advanced agent/risk/execution fields.
 
 ## Development
 

@@ -38,7 +38,7 @@ def callback(
     ctx: typer.Context,
     output: OutputFormat = typer.Option(OutputFormat.table, "--output", "-o", help="Output format: table or json"),
     config: Optional[Path] = typer.Option(None, "--config", help="Path to config.toml"),
-    agent: Optional[str] = typer.Option(None, "--agent", "-a", help="Named agent profile from ~/.config/vaultsfyi/agents"),
+    agent: Optional[str] = typer.Option(None, "--agent", "-a", help="Optional named strategy profile"),
 ):
     """Command-line DeFi vault manager powered by vaults.fyi."""
     ctx.obj = build_context(output, config, agent)
@@ -532,18 +532,20 @@ def wallet_address():
 
 
 @config_app.command("show")
-def config_show():
+def config_show(show_all: bool = typer.Option(False, "--all", help="Show advanced/multi-agent defaults too")):
     """Show effective configuration."""
     ctx = _ctx()
+    cfg = config_mod.sanitize_config(ctx.cfg)
+    if not show_all and not ctx.agent_name:
+        cfg = {k: v for k, v in cfg.items() if k in {"wallet", "network", "vaults", "strategy", "display"}}
     if ctx.output == OutputFormat.json:
-        echo_json(config_mod.sanitize_config(ctx.cfg))
+        echo_json(cfg)
     else:
         rows = []
-        for section, values in ctx.cfg.items():
+        for section, values in cfg.items():
             if isinstance(values, dict):
                 for key, value in values.items():
-                    display_value = "***" if key in {"api_key"} and value else value
-                    rows.append({"key": f"{section}.{key}", "value": display_value})
+                    rows.append({"key": f"{section}.{key}", "value": value})
         print_table(rows)
 
 

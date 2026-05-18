@@ -162,6 +162,25 @@ def test_global_agent_profile_selects_wallet(monkeypatch, tmp_path):
     assert data["wallet"]["name"] == "ows-high-yield"
 
 
+def test_config_show_hides_advanced_sections_by_default(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    result = runner.invoke(app, ["-o", "json", "config", "show"])
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert "wallet" in data
+    assert "strategy" in data
+    assert "agent" not in data
+    assert "risk" not in data
+    assert "execution" not in data
+
+    result = runner.invoke(app, ["-o", "json", "config", "show", "--all"])
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert "agent" in data
+    assert "risk" in data
+    assert "execution" in data
+
+
 def test_agent_run_dry_run_json(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setattr(CliContext, "agent", fake_agent)
