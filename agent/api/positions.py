@@ -26,8 +26,8 @@ class PositionAPI:
         """
         endpoint = f"/v2/portfolio/positions/{wallet_address}"
         params = {
-            'network': 'base',
-            'asset': 'USDC'
+            'allowedNetworks': 'base',
+            'allowedAssets': 'USDC'
         }
 
         response = self.client.make_request(endpoint, params)
@@ -56,6 +56,8 @@ class PositionAPI:
             # Get network and asset info
             network = position.get('network', {})
             asset = position.get('asset', {})
+            if network.get('name') != 'base' or asset.get('symbol') != 'USDC':
+                continue
 
             # Calculate balance in LP tokens (for redemption)
             balance_lp_tokens = balance_native_lp / (10 ** lp_decimals)
@@ -78,8 +80,8 @@ class PositionAPI:
         """Get user's idle USDC balance"""
         endpoint = f"/v2/portfolio/idle-assets/{wallet_address}"
         params = {
-            'network': 'base',
-            'asset': 'USDC'
+            'allowedNetworks': 'base',
+            'allowedAssets': 'USDC'
         }
 
         response = self.client.make_request(endpoint, params)

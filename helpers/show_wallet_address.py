@@ -1,52 +1,48 @@
 #!/usr/bin/env python3
-"""
-Display wallet address derived from private key in .env file
-"""
+"""Display the EVM address for the configured OWS wallet."""
 
 import os
 from pathlib import Path
+
 from dotenv import load_dotenv
-from eth_account import Account
+from ows import get_wallet
+
+
+DEFAULT_WALLET_NAME = "agent-treasury"
 
 
 def main():
-    # Load .env file
     env_path = Path('.env')
+    if env_path.exists():
+        load_dotenv(env_path)
 
-    if not env_path.exists():
-        print("✗ .env file not found")
-        print("Run generate_ethereum_key_pair.py to create a key pair first")
-        return
-
-    load_dotenv(env_path)
-    private_key = os.getenv('PRIVATE_KEY')
-
-    if not private_key:
-        print("✗ PRIVATE_KEY not found in .env file")
-        print("Run generate_ethereum_key_pair.py to create a key pair first")
-        return
-
-    if private_key == 'your_private_key_here':
-        print("✗ PRIVATE_KEY is still a placeholder")
-        print("Run generate_ethereum_key_pair.py to create a key pair first")
-        return
+    wallet_name = os.getenv('OWS_WALLET', DEFAULT_WALLET_NAME)
+    vault_path = os.getenv('OWS_VAULT_PATH') or None
 
     try:
-        # Derive account from private key
-        account = Account.from_key(private_key)
-
-        print("=" * 70)
-        print("WALLET INFORMATION")
-        print("=" * 70)
-        print(f"\nWallet Address: {account.address}")
-        print(f"Private Key: {private_key}")
-        print("\n" + "=" * 70)
-        print("⚠️  Keep your private key secure and never share it!")
-        print("=" * 70)
-
+        wallet = get_wallet(wallet_name, vault_path_opt=vault_path)
     except Exception as e:
-        print(f"✗ Error deriving wallet address: {e}")
-        print("Make sure your PRIVATE_KEY in .env is valid")
+        print(f"✗ OWS wallet '{wallet_name}' not found: {e}")
+        print(f"Run: python3 helpers/create_ows_wallet.py --name {wallet_name}")
+        return
+
+    evm_account = next(
+        (account for account in wallet['accounts'] if account['chain_id'].startswith('eip155:')),
+        None,
+    )
+    if evm_account is None:
+        print(f"✗ OWS wallet '{wallet_name}' has no EVM account")
+        return
+
+    print("=" * 70)
+    print("OWS WALLET INFORMATION")
+    print("=" * 70)
+    print(f"\nWallet name: {wallet['name']}")
+    print(f"Wallet id:   {wallet['id']}")
+    print(f"EVM address: {evm_account['address']}")
+    print(f"Vault:       {vault_path or '~/.ows'}")
+    print("\nPrivate keys are managed by OWS and are not exposed by this tool.")
+    print("=" * 70)
 
 
 if __name__ == "__main__":

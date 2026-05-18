@@ -76,7 +76,7 @@ The agent can:
 defi_agent/
 ├── config.yaml                 # User configuration (criteria, limits)
 ├── config.yaml.example         # Template with defaults
-├── .env                        # Private keys (PRIVATE_KEY)
+├── .env                        # OWS wallet config (no OWS signing keys)
 ├── .env.example                # Template
 ├── requirements.txt            # Python dependencies
 ├── README.md                   # Usage guide and examples
@@ -103,7 +103,7 @@ defi_agent/
 │   └── core/                  # Core Layer - blockchain operations
 │       ├── __init__.py
 │       ├── executor.py        # Transaction execution (sign, broadcast, confirm)
-│       └── wallet.py          # Wallet utilities (account management)
+│       └── wallet.py          # OWS wallet utilities (wallet lookup/address)
 │
 └── examples/
     ├── basic_usage.py         # Demo: full flow (deploy → positions → redeem)
@@ -285,14 +285,13 @@ defi_agent/
 
 #### `wallet.py` - Wallet Management
 
-**Purpose**: Handle wallet account and key management.
+**Purpose**: Handle OWS wallet lookup and public account metadata. Key material remains inside the OWS vault.
 
 **Key Functions**:
-- `get_account()` → Account object (from private key in .env)
-- `get_address()` → Wallet address (string)
+- `get_address()` → OWS EVM wallet address (string)
 - `get_balance(network='base')` → ETH balance (for gas)
 
-**Uses**: `eth_account.Account`
+**Uses**: `open-wallet-standard` Python bindings
 
 #### `executor.py` - Transaction Executor
 
@@ -307,12 +306,13 @@ defi_agent/
 
 **Flow**:
 1. **Check ETH balance for gas** (requirement Q1)
-2. Sign transaction with private key
-3. Estimate gas using `web3.eth.estimate_gas()`
-4. Set gas limit and gas price
-5. Broadcast transaction to Base RPC
-6. Wait for confirmation (optional)
-7. Return transaction hash
+2. Estimate gas using `web3.eth.estimate_gas()`
+3. Set gas limit and gas price
+4. Serialize the unsigned transaction and request an OWS signature
+5. Assemble the signed raw transaction
+6. Broadcast transaction to Base RPC
+7. Wait for confirmation (optional)
+8. Return transaction hash
 
 **Multi-Transaction Handling** (requirement Q23):
 - Execute approve + deposit transactions sequentially
@@ -324,7 +324,7 @@ defi_agent/
 - Use network's suggested gas price (or default)
 - No user configuration needed (sensible defaults)
 
-**Uses**: `web3.py`, `eth_account`
+**Uses**: `web3.py`, `open-wallet-standard`, `eth-account` transaction encoding helpers
 
 ## Configuration
 
@@ -372,11 +372,13 @@ verbose: false
 
 ### .env
 
-Private keys and secrets (never committed to git).
+Local wallet configuration. Do not commit real passphrases or API tokens.
 
 ```bash
-# Ethereum private key (used for both x402 payments and vault transactions)
-PRIVATE_KEY=0x...
+# OWS wallet name/UUID used for vault transactions and x402 payments
+OWS_WALLET=agent-treasury
+OWS_CHAIN=base
+# Optional: OWS_PASSPHRASE=wallet-passphrase-or-scoped-ows-token
 
 # Optional: Custom RPC endpoint
 # RPC_URL=https://base-mainnet.infura.io/v3/YOUR-PROJECT-ID
@@ -429,14 +431,14 @@ PRIVATE_KEY=0x...
    - If none qualify → error: "No suitable vaults available" with detailed reason
 
 8. **Generate Transaction(s)**
-   - Call `api.transactions.generate_deposit_tx(wallet, selected_vault, deploy_amount, usdc_address, 'base')`
+   - Call `api.transactions.generate_deposit_tx(wallet_address, selected_vault, deploy_amount, usdc_address, 'base')`
    - x402 payment: ~$0.01 USDC
    - Result: **list[dict]** - typically `[approve_tx, deposit_tx]`
 
 9. **Execute Transactions** (requirement Q23, Q24)
    - Call `core.executor.execute_multiple(tx_payloads)`
    - For each transaction:
-     - Sign with private key
+     - Sign through OWS (`sign_transaction`) without exposing OWS signing keys
      - Estimate gas → set gas limit
      - Broadcast to Base network
      - Wait for confirmation
@@ -525,7 +527,7 @@ Example: `agent.redeem('YearnUSDCV', 50)` - Redeem 50% from position by nickname
 ### Error Types
 
 1. **Configuration Errors**
-   - Missing .env file or PRIVATE_KEY
+   - Missing OWS wallet or invalid OWS configuration
    - Invalid config.yaml format
    - Action: Print error, exit immediately
 
@@ -575,15 +577,14 @@ Traceback:
 
 **Core Libraries**:
 - `web3>=6.0.0` - Ethereum blockchain interaction
-- `eth-account>=0.8.0` - Transaction signing, account management
+- `eth-account>=0.8.0` - EVM transaction encoding helpers (not key custody)
 - `requests>=2.25.0` - HTTP requests (for x402)
 - `python-dotenv>=0.19.0` - Environment variable management
 - `pyyaml>=6.0` - YAML config parsing
 - `tabulate>=0.9.0` - Table formatting for displays
 
 **x402 Protocol**:
-- `x402>=0.2.1` - Payment protocol client
-- `httpx>=0.24.0` - HTTP client (x402 dependency)
+- OWS CLI - `ows pay request` for x402-paid API calls
 
 **Note**: Reusing patterns from `api-tests` but not importing that codebase directly.
 
@@ -725,8 +726,8 @@ agent.redeem_all()
 
 **Rationale**:
 - Demonstrates pay-per-use model (relevant for agent economics)
-- No API key management needed
-- Payment = authentication (simpler architecture)
+- No API key management needed for vaults.fyi; OWS may use scoped local API tokens for agent signing access
+- Payment = authentication; OWS signs payment proofs outside the agent process
 - Showcases blockchain-native access control
 
 **Trade-off**: Small USDC cost per request (~$0.01), but aligns with project goals.

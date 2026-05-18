@@ -1,38 +1,63 @@
 """
-Wallet management module
-Handles private key management and account operations
+OWS wallet module.
+
+This project uses Open Wallet Standard (https://openwallet.sh/) for wallet
+storage and signing. Private keys are never loaded from .env and are never
+exposed to the agent process.
 """
 
 import os
-from eth_account import Account
-from web3 import Web3
+from typing import Any
+
 from dotenv import load_dotenv
+from ows import get_wallet
+
+
+DEFAULT_WALLET_NAME = "agent-treasury"
+DEFAULT_CHAIN = "base"
+EVM_ACCOUNT_PREFIX = "eip155:"
 
 
 class Wallet:
-    """Manages wallet account and private key"""
+    """OWS-backed wallet handle.
 
-    def __init__(self):
-        """Initialize wallet from private key in environment"""
+    The wallet is resolved from the local OWS vault, normally ~/.ows/.
+    Configure it with:
+      - OWS_WALLET: wallet name or UUID (default: agent-treasury)
+      - OWS_PASSPHRASE: wallet passphrase or scoped OWS API token
+      - OWS_VAULT_PATH: optional custom vault path for tests/sandboxes
+      - OWS_CHAIN: signing chain alias/CAIP-2 ID (default: base)
+    """
+
+    def __init__(self, name: str | None = None, chain: str | None = None):
         load_dotenv()
 
-        private_key = os.getenv('PRIVATE_KEY')
-        if not private_key:
-            raise ValueError("PRIVATE_KEY not found in environment variables")
+        self.name = name or os.getenv("OWS_WALLET", DEFAULT_WALLET_NAME)
+        self.chain = chain or os.getenv("OWS_CHAIN", DEFAULT_CHAIN)
+        self.passphrase = os.getenv("OWS_PASSPHRASE")
+        self.vault_path = os.getenv("OWS_VAULT_PATH") or None
 
-        # Create account from private key
-        self.account = Account.from_key(private_key)
-        self.address = self.account.address
+        try:
+            self.wallet_info: dict[str, Any] = get_wallet(self.name, vault_path_opt=self.vault_path)
+        except Exception as exc:
+            raise ValueError(
+                f"OWS wallet '{self.name}' was not found. Create one with "
+                f"`python3 helpers/create_ows_wallet.py --name {self.name}` "
+                "or import one with the `ows wallet import` CLI."
+            ) from exc
+
+        self.id = self.wallet_info["id"]
+        self.address = self._evm_address()
+
+    def _evm_address(self) -> str:
+        for account in self.wallet_info.get("accounts", []):
+            if account.get("chain_id", "").startswith(EVM_ACCOUNT_PREFIX):
+                return account["address"]
+        raise ValueError(f"OWS wallet '{self.name}' does not contain an EVM account")
 
     def get_address(self) -> str:
-        """Get wallet address"""
+        """Return the EVM wallet address."""
         return self.address
 
-    def sign_transaction(self, transaction_dict: dict) -> bytes:
-        """Sign a transaction"""
-        signed = self.account.sign_transaction(transaction_dict)
-        # In newer eth-account versions, it's raw_transaction (with underscore)
-        return signed.raw_transaction if hasattr(signed, 'raw_transaction') else signed.rawTransaction
-
     def __repr__(self):
-        return f"Wallet(address={self.address})"
+        return f"Wallet(name={self.name}, address={self.address})"
