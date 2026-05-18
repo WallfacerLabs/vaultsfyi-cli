@@ -1,101 +1,105 @@
 """
-x402 Payment Protocol Client
-Handles pay-per-use API access with USDC payments
+x402 / vaults.fyi API client.
+
+Private-key based x402 signing has been removed. Paid requests are delegated to
+an Open Wallet Standard-compatible `ows pay request` command when available.
+Plain HTTP is still used for endpoints that do not require payment.
 """
 
 import json
+import os
+import shutil
+import subprocess
+from urllib.parse import urlencode
+
 import requests
-from x402.clients.base import x402Client
-from x402.types import x402PaymentRequiredResponse
-from x402.encoding import safe_base64_decode
+from dotenv import load_dotenv
 
 
 class X402Client:
-    """Client for making x402 authenticated API requests"""
+    """Client for making vaults.fyi API requests with OWS-backed payments."""
 
     def __init__(self, wallet, base_url: str = "https://api.vaults.fyi"):
-        """Initialize x402 client"""
+        """Initialize x402 client."""
+        load_dotenv()
         self.wallet = wallet
         self.base_url = base_url.rstrip('/')
-        self.x402_client = x402Client(account=wallet.account)
+        self.ows_cli = os.getenv('OWS_CLI_PATH') or shutil.which('ows')
+        self.api_key = os.getenv('VAULTS_API_KEY')
 
     def make_request(self, endpoint: str, params: dict = None, timeout: int = 60) -> dict:
         """
-        Make x402 authenticated request
+        Make an API request.
 
         Flow:
-        1. Send GET with x-402-auth: true header
-        2. Receive 402 with payment requirements
-        3. Execute blockchain payment (Base/USDC)
-        4. Resend GET with X-Payment proof header
-        5. Receive 200 with data
+        1. Send direct GET. If the endpoint is free, return the response.
+        2. If the endpoint requires x402 payment, retry via OWS CLI so payment
+           signing happens inside the OWS access layer, not inside this process.
         """
         url = f"{self.base_url}{endpoint}"
 
-        # Step 1: Initial request to trigger 402 (MUST include x-402-auth header)
         headers = {
             'x-402-auth': 'true',
             'Accept': 'application/json'
         }
+        if self.api_key:
+            headers['x-api-key'] = self.api_key
 
         response = requests.get(url, params=params, headers=headers, timeout=10)
 
-        # If 402, handle payment
-        if response.status_code == 402:
-            return self._handle_payment_and_retry(response, url, params, timeout)
-
-        # If 200, return data (no payment required)
         if response.status_code == 200:
             return response.json()
 
-        # Handle errors
+        if response.status_code == 402:
+            return self._make_paid_request(url, params=params, timeout=timeout)
+
         raise Exception(f"API request failed: {response.status_code} {response.text}")
 
-    def _handle_payment_and_retry(self, initial_response, url: str, params: dict, timeout: int) -> dict:
-        """Handle x402 payment flow using x402 library"""
+    def _make_paid_request(self, url: str, params: dict = None, timeout: int = 60) -> dict:
+        """Use `ows pay request` for x402-paid requests."""
+        if not self.ows_cli:
+            raise RuntimeError(
+                "This endpoint requires x402 payment, but the OWS CLI was not found. "
+                "Install it with `curl -fsSL https://docs.openwallet.sh/install.sh | bash` "
+                "or set OWS_CLI_PATH. The Python agent will not handle plaintext private keys."
+            )
 
-        # Step 2-3: Parse payment requirements and make payment
-        payment_data = initial_response.json()
-        payment_response = x402PaymentRequiredResponse(**payment_data)
+        if params:
+            separator = '&' if '?' in url else '?'
+            url = f"{url}{separator}{urlencode(params, doseq=True)}"
 
-        # Select payment requirements (Base/USDC)
-        selected_req = self.x402_client.select_payment_requirements(payment_response.accepts)
+        command = [
+            self.ows_cli,
+            'pay',
+            'request',
+            url,
+            '--wallet',
+            self.wallet.name,
+            '--method',
+            'GET',
+        ]
 
-        # Step 4: Create payment proof header
-        payment_header = self.x402_client.create_payment_header(
-            selected_req,
-            payment_response.x402_version
+        env = os.environ.copy()
+        if self.wallet.passphrase is not None:
+            env['OWS_PASSPHRASE'] = self.wallet.passphrase
+        else:
+            command.append('--no-passphrase')
+
+        result = subprocess.run(
+            command,
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+            check=False,
         )
 
-        # Step 5: Retry with payment proof
-        headers = {
-            'x-402-auth': 'true',
-            'Accept': 'application/json',
-            'X-Payment': payment_header
-        }
+        if result.returncode != 0:
+            stderr = result.stderr.strip() or result.stdout.strip()
+            raise RuntimeError(f"OWS paid request failed: {stderr}")
 
-        paid_response = requests.get(url, params=params, headers=headers, timeout=timeout)
-
-        # Handle edge case: API may return 500 error even after successful payment
-        if paid_response.status_code == 500 and 'x-payment-response' in paid_response.headers:
-            try:
-                payment_resp_data = json.loads(
-                    safe_base64_decode(paid_response.headers['x-payment-response'])
-                )
-                if payment_resp_data.get('success'):
-                    # Payment succeeded despite 500 error - API bug
-                    # Try to return data if available
-                    if paid_response.text:
-                        try:
-                            return paid_response.json()
-                        except:
-                            pass
-            except Exception:
-                pass
-
-        # Standard success case
-        if paid_response.status_code == 200:
-            return paid_response.json()
-
-        # Payment verification failed
-        raise Exception(f"Payment verification failed: {paid_response.status_code} {paid_response.text}")
+        body = result.stdout.strip()
+        try:
+            return json.loads(body)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"OWS paid request did not return JSON: {body[:500]}") from exc

@@ -72,6 +72,24 @@ class OpportunityAPI:
                 apy_total = float(apy_data.get('total', 0))
                 if apy_total < criteria.get('min_apy', 0):
                     continue
+                if criteria.get('max_apy') is not None and apy_total > criteria['max_apy']:
+                    continue
+
+                protocol = vault.get('protocol', {}) or {}
+                curator = vault.get('curator', {}) or {}
+                protocol_name = (protocol.get('name') or vault.get('protocolName') or '').lower()
+                curator_name = (curator.get('name') or vault.get('curatorName') or '').lower()
+
+                allowed_protocols = {p.lower() for p in criteria.get('allowed_protocols', [])}
+                blocked_protocols = {p.lower() for p in criteria.get('blocked_protocols', [])}
+                allowed_curators = {c.lower() for c in criteria.get('allowed_curators', [])}
+
+                if allowed_protocols and protocol_name not in allowed_protocols:
+                    continue
+                if blocked_protocols and protocol_name in blocked_protocols:
+                    continue
+                if allowed_curators and curator_name not in allowed_curators:
+                    continue
 
                 opportunities.append({
                     'vault_address': vault.get('address'),
@@ -80,6 +98,8 @@ class OpportunityAPI:
                     'tvl': tvl,
                     'network': network_name,
                     'asset': asset.get('symbol'),
+                    'protocol': protocol.get('name') or vault.get('protocolName'),
+                    'curator': curator.get('name') or vault.get('curatorName'),
                 })
 
         # Sort by APY descending
