@@ -1,0 +1,1 @@
+"""vaultsfyi CLI package."""

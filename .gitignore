@@ -39,6 +39,6 @@ env/
 .DS_Store
 Thumbs.db
 
-# Debug scripts
+# Debug scripts at repo root
 debug_*.py
-test_*.py
+/test_*.py

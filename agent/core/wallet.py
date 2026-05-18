@@ -42,7 +42,7 @@ class Wallet:
         except Exception as exc:
             raise ValueError(
                 f"OWS wallet '{self.name}' was not found. Create one with "
-                f"`python3 helpers/create_ows_wallet.py --name {self.name}` "
+                f"`vaultsfyi wallet create --name {self.name}` "
                 "or import one with the `ows wallet import` CLI."
             ) from exc
 
