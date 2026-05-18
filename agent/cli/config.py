@@ -1,4 +1,4 @@
-"""User-level configuration for the vaultsfyi CLI."""
+"""User-level and per-agent configuration for the vaultsfyi CLI."""
 
 from __future__ import annotations
 
@@ -11,6 +11,12 @@ from typing import Any
 import tomli_w
 
 DEFAULT_CONFIG: dict[str, Any] = {
+    "agent": {
+        "name": "default",
+        "mode": "dry-run",  # dry-run | paper | live
+        "max_deploy_usd": None,
+        "max_position_pct": None,
+    },
     "wallet": {
         "name": "agent-treasury",
         "chain": "base",
@@ -30,10 +36,26 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "asset_address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
         "min_deposit_usd": 0.10,
         "min_apy": 0.01,
+        "max_apy": None,
         "min_tvl": 1_000_000,
         "apy_interval": "1day",
         "only_transactional": True,
         "vault_whitelist": [],
+        "allowed_protocols": [],
+        "blocked_protocols": [],
+        "allowed_curators": [],
+    },
+    "risk": {
+        "max_single_vault_usd": None,
+        "require_withdrawable": False,
+        "min_vault_age_days": None,
+        "allow_incentive_heavy_yield": True,
+    },
+    "execution": {
+        "deploy_percent": 10.0,
+        "require_confirmation": True,
+        "slippage_bps": 50,
+        "cooldown_after_tx": "10m",
     },
     "display": {
         "decimals": 2,
@@ -64,6 +86,28 @@ def default_config_path() -> Path:
     return config_dir() / "config.toml"
 
 
+def agents_dir() -> Path:
+    return config_dir() / "agents"
+
+
+def agent_config_path(agent_name: str) -> Path:
+    return agents_dir() / f"{agent_name}.toml"
+
+
+def state_dir(agent_name: str | None = None) -> Path:
+    root = Path(os.getenv("XDG_STATE_HOME", Path.home() / ".local" / "state")) / "vaultsfyi"
+    return root / "agents" / agent_name if agent_name else root
+
+
+def logs_dir(agent_name: str | None = None) -> Path:
+    root = state_dir() / "logs"
+    return root / agent_name if agent_name else root
+
+
+def locks_dir() -> Path:
+    return state_dir() / "locks"
+
+
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     merged = deepcopy(base)
     for key, value in override.items():
@@ -74,13 +118,27 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
     return merged
 
 
-def load_config(config_path: Path | None = None) -> dict[str, Any]:
+def load_toml(path: Path) -> dict[str, Any]:
+    with path.open("rb") as fh:
+        return tomllib.load(fh)
+
+
+def load_config(config_path: Path | None = None, agent_name: str | None = None) -> dict[str, Any]:
     path = config_path or default_config_path()
     cfg = deepcopy(DEFAULT_CONFIG)
 
     if path.exists():
-        with path.open("rb") as fh:
-            cfg = _deep_merge(cfg, tomllib.load(fh))
+        cfg = _deep_merge(cfg, load_toml(path))
+
+    if agent_name:
+        profile_path = agent_config_path(agent_name)
+        if not profile_path.exists():
+            raise ValueError(f"agent profile '{agent_name}' does not exist at {profile_path}")
+        cfg = _deep_merge(cfg, load_toml(profile_path))
+        cfg.setdefault("agent", {})["name"] = agent_name
+        cfg["agent"]["profile_path"] = str(profile_path)
+    else:
+        cfg.setdefault("agent", {})["name"] = cfg.get("agent", {}).get("name") or "default"
 
     apply_env_overrides(cfg)
     return cfg
@@ -108,21 +166,80 @@ def write_config(cfg: dict[str, Any], config_path: Path | None = None) -> Path:
     return path
 
 
+def write_agent_profile(agent_name: str, cfg: dict[str, Any]) -> Path:
+    path = agent_config_path(agent_name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(tomli_w.dumps(_toml_safe(cfg)))
+    return path
+
+
+def set_config_file_value(path: Path, dotted_key: str, value: Any) -> Path:
+    cfg = load_toml(path) if path.exists() else deepcopy(DEFAULT_CONFIG)
+    set_config_value(cfg, dotted_key, value)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(tomli_w.dumps(_toml_safe(cfg)))
+    return path
+
+
+def list_agent_profiles() -> list[dict[str, Any]]:
+    if not agents_dir().exists():
+        return []
+    rows = []
+    for path in sorted(agents_dir().glob("*.toml")):
+        try:
+            cfg = load_toml(path)
+        except Exception:
+            cfg = {}
+        rows.append({
+            "name": path.stem,
+            "wallet": cfg.get("wallet", {}).get("name", ""),
+            "mode": cfg.get("agent", {}).get("mode", ""),
+            "path": str(path),
+        })
+    return rows
+
+
+def new_agent_profile(agent_name: str, wallet_name: str | None = None, mode: str = "dry-run") -> dict[str, Any]:
+    if mode not in {"dry-run", "paper", "live"}:
+        raise ValueError("mode must be dry-run, paper, or live")
+    return {
+        "agent": {
+            "name": agent_name,
+            "mode": mode,
+            "max_deploy_usd": None,
+            "max_position_pct": None,
+        },
+        "wallet": {
+            "name": wallet_name or agent_name,
+            "chain": "base",
+        },
+        "strategy": deepcopy(DEFAULT_CONFIG["strategy"]),
+        "risk": deepcopy(DEFAULT_CONFIG["risk"]),
+        "execution": deepcopy(DEFAULT_CONFIG["execution"]),
+    }
+
+
 def agent_config(cfg: dict[str, Any]) -> dict[str, Any]:
     strategy = cfg["strategy"]
     display = cfg["display"]
+    criteria = {
+        "min_apy": float(strategy.get("min_apy", 0.01)),
+        "min_tvl": float(strategy.get("min_tvl", 1_000_000)),
+        "apy_interval": strategy.get("apy_interval", "1day"),
+        "only_transactional": bool(strategy.get("only_transactional", True)),
+        "allowed_protocols": strategy.get("allowed_protocols", []),
+        "blocked_protocols": strategy.get("blocked_protocols", []),
+        "allowed_curators": strategy.get("allowed_curators", []),
+    }
+    if strategy.get("max_apy") is not None:
+        criteria["max_apy"] = float(strategy["max_apy"])
     return {
         "vaults_api_url": cfg["vaults"].get("api_url", "https://api.vaults.fyi"),
         "network": strategy.get("network", "base"),
         "asset": strategy.get("asset", "USDC"),
         "asset_address": strategy.get("asset_address", DEFAULT_CONFIG["strategy"]["asset_address"]),
         "investment": {"min_deposit_usd": float(strategy.get("min_deposit_usd", 0.10))},
-        "criteria": {
-            "min_apy": float(strategy.get("min_apy", 0.01)),
-            "min_tvl": float(strategy.get("min_tvl", 1_000_000)),
-            "apy_interval": strategy.get("apy_interval", "1day"),
-            "only_transactional": bool(strategy.get("only_transactional", True)),
-        },
+        "criteria": criteria,
         "display": {
             "decimals": int(display.get("decimals", 2)),
             "position_retry_attempts": int(display.get("position_retry_attempts", 3)),
@@ -159,3 +276,30 @@ def set_config_value(cfg: dict[str, Any], dotted_key: str, value: Any) -> None:
     if section not in cfg:
         raise ValueError(f"unknown config section: {section}")
     cfg[section][key] = value
+
+
+def parse_config_value(value: str) -> Any:
+    lower = value.lower()
+    if lower == "true":
+        return True
+    if lower == "false":
+        return False
+    if lower in {"none", "null"}:
+        return None
+    if "," in value:
+        return [item.strip() for item in value.split(",") if item.strip()]
+    try:
+        return int(value)
+    except ValueError:
+        pass
+    try:
+        return float(value)
+    except ValueError:
+        return value
+
+
+def sanitize_config(cfg: dict[str, Any]) -> dict[str, Any]:
+    sanitized = deepcopy(cfg)
+    if sanitized.get("vaults", {}).get("api_key"):
+        sanitized["vaults"]["api_key"] = "***"
+    return sanitized

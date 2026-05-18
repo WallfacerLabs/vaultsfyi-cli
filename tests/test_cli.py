@@ -91,6 +91,7 @@ def test_help_lists_core_commands():
     assert "status" in result.stdout
     assert "deploy" in result.stdout
     assert "wallet" in result.stdout
+    assert "agent" in result.stdout
 
 
 def test_status_json(monkeypatch):
@@ -134,3 +135,40 @@ def test_redeem_dry_run_json(monkeypatch):
     data = json.loads(result.stdout)
     assert data["status"] == "dry_run"
     assert data["position"]["nickname"] == "YearnUSDCV"
+
+
+def test_agent_init_and_list(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    result = runner.invoke(app, ["-o", "json", "agent", "init", "conservative", "--wallet", "ows-conservative"])
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["name"] == "conservative"
+    assert data["wallet"] == "ows-conservative"
+
+    result = runner.invoke(app, ["-o", "json", "agent", "list"])
+    assert result.exit_code == 0
+    rows = json.loads(result.stdout)
+    assert rows[0]["name"] == "conservative"
+    assert rows[0]["wallet"] == "ows-conservative"
+
+
+def test_global_agent_profile_selects_wallet(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    runner.invoke(app, ["agent", "init", "high-yield", "--wallet", "ows-high-yield"])
+    result = runner.invoke(app, ["--agent", "high-yield", "-o", "json", "config", "show"])
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["agent"]["name"] == "high-yield"
+    assert data["wallet"]["name"] == "ows-high-yield"
+
+
+def test_agent_run_dry_run_json(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setattr(CliContext, "agent", fake_agent)
+    runner.invoke(app, ["agent", "init", "conservative", "--wallet", "ows-conservative"])
+    result = runner.invoke(app, ["-o", "json", "agent", "run", "conservative", "--dry-run"])
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["agent"] == "conservative"
+    assert data["wallet"] == "ows-conservative"
+    assert data["plan"]["status"] == "dry_run"

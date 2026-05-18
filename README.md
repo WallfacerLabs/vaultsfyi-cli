@@ -114,6 +114,62 @@ Global flags:
 vaultsfyi --output table positions
 vaultsfyi -o json positions
 vaultsfyi --config ~/.config/vaultsfyi/config.toml status
+vaultsfyi --agent conservative status
+```
+
+## Multiple wallets and strategy agents
+
+A named agent profile is a separate strategy configuration that can point at its own OWS wallet. Use this for running conservative, high-yield, protocol-specific, or experimental strategies without mixing wallet state.
+
+Create profiles:
+
+```bash
+vaultsfyi agent init conservative --wallet ows-conservative --mode dry-run
+vaultsfyi agent init high-yield --wallet ows-high-yield --mode dry-run
+vaultsfyi agent list
+```
+
+Create/fund each wallet:
+
+```bash
+vaultsfyi --agent conservative wallet create
+vaultsfyi --agent high-yield wallet create
+vaultsfyi --agent conservative wallet address
+vaultsfyi --agent high-yield wallet address
+```
+
+Tune each profile:
+
+```bash
+vaultsfyi --agent conservative config set strategy.min_apy 0.03
+vaultsfyi --agent conservative config set strategy.max_apy 0.25
+vaultsfyi --agent conservative config set agent.max_deploy_usd 100
+
+vaultsfyi --agent high-yield config set strategy.min_apy 0.08
+vaultsfyi --agent high-yield config set strategy.min_tvl 500000
+```
+
+Run and compare strategies:
+
+```bash
+vaultsfyi --agent conservative opportunities
+vaultsfyi agent run conservative --dry-run
+vaultsfyi agent compare conservative high-yield
+```
+
+Live execution is intentionally explicit:
+
+```bash
+vaultsfyi --agent conservative config set agent.mode live
+vaultsfyi agent run conservative --execute --yes
+```
+
+Live transaction commands take a wallet lock under `~/.local/state/vaultsfyi/locks/` so two processes cannot broadcast from the same OWS wallet at the same time.
+
+Profile files live at:
+
+```text
+~/.config/vaultsfyi/agents/<name>.toml
 ```
 
 ## Interactive shell
@@ -158,16 +214,38 @@ rpc_url = "https://mainnet.base.org"
 api_url = "https://api.vaults.fyi"
 # api_key = "..."
 
+[agent]
+name = "default"
+mode = "dry-run" # dry-run | paper | live
+# max_deploy_usd = 100
+# max_position_pct = 25
+
 [strategy]
 network = "base"
 asset = "USDC"
 asset_address = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
 min_deposit_usd = 0.10
 min_apy = 0.01
+# max_apy = 0.25
 min_tvl = 1000000
 apy_interval = "1day"
 only_transactional = true
 vault_whitelist = []
+allowed_protocols = []
+blocked_protocols = []
+allowed_curators = []
+
+[risk]
+# max_single_vault_usd = 100
+require_withdrawable = false
+# min_vault_age_days = 14
+allow_incentive_heavy_yield = true
+
+[execution]
+deploy_percent = 10.0
+require_confirmation = true
+slippage_bps = 50
+cooldown_after_tx = "10m"
 
 [display]
 decimals = 2
@@ -178,7 +256,7 @@ position_retry_delay = 5
 Precedence:
 
 ```text
-CLI flags > environment variables > user config > legacy project config fallback > defaults
+CLI flags > environment variables > selected agent profile > user config > defaults
 ```
 
 Supported environment overrides:

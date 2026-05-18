@@ -5,10 +5,12 @@ from __future__ import annotations
 import shlex
 import shutil
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 
 import click
+import fcntl
 import typer
 from ows import create_wallet, get_wallet
 from typer.main import get_command
@@ -20,8 +22,10 @@ from agent.cli.output import OutputFormat, confirm_or_abort, echo_error, echo_js
 app = typer.Typer(help="vaults.fyi DeFi vault manager")
 wallet_app = typer.Typer(help="Manage the configured OWS wallet")
 config_app = typer.Typer(help="Manage vaultsfyi CLI config")
+agent_app = typer.Typer(help="Manage named strategy agents")
 app.add_typer(wallet_app, name="wallet")
 app.add_typer(config_app, name="config")
+app.add_typer(agent_app, name="agent")
 
 
 def _ctx() -> CliContext:
@@ -34,9 +38,10 @@ def callback(
     ctx: typer.Context,
     output: OutputFormat = typer.Option(OutputFormat.table, "--output", "-o", help="Output format: table or json"),
     config: Optional[Path] = typer.Option(None, "--config", help="Path to config.toml"),
+    agent: Optional[str] = typer.Option(None, "--agent", "-a", help="Named agent profile from ~/.config/vaultsfyi/agents"),
 ):
     """Command-line DeFi vault manager powered by vaults.fyi."""
-    ctx.obj = build_context(output, config)
+    ctx.obj = build_context(output, config, agent)
     if ctx.invoked_subcommand is None:
         typer.echo(ctx.get_help())
 
@@ -61,6 +66,42 @@ def _state_row(state: dict) -> dict:
         "idle_usdc": format_usd(state["idle_assets"]["usdc_balance"]),
         "positions": state["positions_count"],
     }
+
+
+def _effective_deploy_percent(ctx: CliContext, agent, requested_percent: float) -> float:
+    caps = [
+        ctx.cfg.get("agent", {}).get("max_deploy_usd"),
+        ctx.cfg.get("risk", {}).get("max_single_vault_usd"),
+    ]
+    caps = [float(cap) for cap in caps if cap is not None]
+    if not caps:
+        return requested_percent
+
+    idle = agent.get_idle_assets()["usdc_balance"]
+    if idle <= 0:
+        return requested_percent
+    requested_usd = idle * (requested_percent / 100)
+    capped_usd = min(requested_usd, min(caps))
+    return max(0.0, min(100.0, (capped_usd / idle) * 100))
+
+
+@contextmanager
+def _wallet_lock(ctx: CliContext):
+    wallet_name = ctx.cfg["wallet"]["name"]
+    locks_dir = config_mod.locks_dir()
+    locks_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = locks_dir / f"{wallet_name}.lock"
+    with lock_path.open("w") as lock_file:
+        try:
+            fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise RuntimeError(f"wallet '{wallet_name}' is already locked by another vaultsfyi process") from exc
+        lock_file.write(f"agent={ctx.effective_agent_name}\n")
+        lock_file.flush()
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file, fcntl.LOCK_UN)
 
 
 @app.command()
@@ -142,7 +183,8 @@ def deploy(
     """Deploy a percentage of idle USDC to the selected vault."""
     def inner(ctx: CliContext):
         agent = ctx.agent()
-        plan = agent.prepare_deploy(percent)
+        deploy_percent = _effective_deploy_percent(ctx, agent, percent)
+        plan = agent.prepare_deploy(deploy_percent)
         if dry_run:
             result = {**plan, "status": "dry_run"}
         else:
@@ -150,7 +192,8 @@ def deploy(
                 typer.echo(f"Deploy {format_usd(plan['amount_usd'], agent.display_decimals)} to {plan['vault']['vault_name']}")
                 typer.echo(f"Transactions: {plan['transaction_count']}")
             confirm_or_abort("Broadcast these transaction(s)?", yes, ctx.output)
-            result = agent.execute_deploy_plan(plan)
+            with _wallet_lock(ctx):
+                result = agent.execute_deploy_plan(plan)
         if ctx.output == OutputFormat.json:
             echo_json(result)
         else:
@@ -182,7 +225,8 @@ def redeem(
                 typer.echo(f"Redeem {format_usd(plan['amount_usd'], agent.display_decimals)} from {plan['position']['vault_name']}")
                 typer.echo(f"Transactions: {plan['transaction_count']}")
             confirm_or_abort("Broadcast these transaction(s)?", yes, ctx.output)
-            result = agent.execute_redeem_plan(plan)
+            with _wallet_lock(ctx):
+                result = agent.execute_redeem_plan(plan)
         if ctx.output == OutputFormat.json:
             echo_json(result)
         else:
@@ -212,7 +256,8 @@ def redeem_all(
             if ctx.output == OutputFormat.table:
                 typer.echo(f"Redeem all positions: {len(plans)} plan(s)")
             confirm_or_abort("Broadcast all redemption transaction(s)?", yes, ctx.output)
-            results = [agent.execute_redeem_plan(plan) for plan in plans]
+            with _wallet_lock(ctx):
+                results = [agent.execute_redeem_plan(plan) for plan in plans]
         if ctx.output == OutputFormat.json:
             echo_json(results)
         else:
@@ -251,6 +296,154 @@ def setup(
             typer.echo(f"Wallet: {wallet_name}")
             typer.echo("OWS CLI: " + (ows_cli or "not found on PATH"))
             typer.echo("Next: `vaultsfyi wallet create` or import with `ows wallet import`, then `vaultsfyi status`.")
+    _run(inner)
+
+
+@agent_app.command("init")
+def agent_init(
+    name: str = typer.Argument(..., help="Agent profile name"),
+    wallet: Optional[str] = typer.Option(None, "--wallet", help="OWS wallet name, defaults to agent name"),
+    mode: str = typer.Option("dry-run", "--mode", help="dry-run, paper, or live"),
+):
+    """Create a named agent strategy profile."""
+    def inner(ctx: CliContext):
+        path = config_mod.agent_config_path(name)
+        if path.exists():
+            raise ValueError(f"agent profile '{name}' already exists at {path}")
+        profile = config_mod.new_agent_profile(name, wallet, mode)
+        path = config_mod.write_agent_profile(name, profile)
+        payload = {"name": name, "wallet": profile["wallet"]["name"], "mode": mode, "path": str(path)}
+        if ctx.output == OutputFormat.json:
+            echo_json(payload)
+        else:
+            print_table([payload])
+            typer.echo(f"Next: vaultsfyi --agent {name} wallet create")
+    _run(inner)
+
+
+@agent_app.command("list")
+def agent_list():
+    """List configured agent profiles."""
+    ctx = _ctx()
+    rows = config_mod.list_agent_profiles()
+    if ctx.output == OutputFormat.json:
+        echo_json(rows)
+    else:
+        print_table(rows)
+
+
+@agent_app.command("show")
+def agent_show(name: Optional[str] = typer.Argument(None, help="Agent profile name, defaults to --agent")):
+    """Show an effective agent profile config."""
+    def inner(ctx: CliContext):
+        agent_name = name or ctx.agent_name
+        if not agent_name:
+            raise ValueError("provide an agent name or use --agent")
+        cfg = config_mod.load_config(ctx.config_path, agent_name)
+        if ctx.output == OutputFormat.json:
+            echo_json(config_mod.sanitize_config(cfg))
+        else:
+            rows = []
+            for section, values in cfg.items():
+                if isinstance(values, dict):
+                    for key, value in values.items():
+                        display_value = "***" if key in {"api_key"} and value else value
+                        rows.append({"key": f"{section}.{key}", "value": display_value})
+            print_table(rows)
+    _run(inner)
+
+
+def _agent_run_payload(ctx: CliContext, deploy_percent: float | None = None) -> dict:
+    agent = ctx.agent()
+    state = agent.get_state()
+    opportunities = agent.get_opportunities()
+    top = opportunities[0] if opportunities else None
+    payload = {
+        "agent": ctx.effective_agent_name,
+        "wallet": ctx.cfg["wallet"]["name"],
+        "mode": ctx.cfg["agent"].get("mode", "dry-run"),
+        "state": state,
+        "top_opportunity": top,
+        "opportunities_count": len(opportunities),
+    }
+    if deploy_percent is not None:
+        try:
+            deploy_percent = _effective_deploy_percent(ctx, agent, deploy_percent)
+            payload["plan"] = agent.prepare_deploy(deploy_percent)
+            payload["plan"]["status"] = "dry_run"
+        except Exception as exc:
+            payload["plan_error"] = str(exc)
+    return payload
+
+
+@agent_app.command("run")
+def agent_run(
+    name: str = typer.Argument(..., help="Agent profile name"),
+    once: bool = typer.Option(True, "--once", help="Run one strategy pass"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Never broadcast; build a dry-run plan when possible"),
+    execute: bool = typer.Option(False, "--execute", help="Allow live deploy if profile mode is live"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Required with --execute to broadcast"),
+):
+    """Run one named agent strategy pass."""
+    def inner(ctx: CliContext):
+        if not once:
+            raise ValueError("loop mode is not implemented yet; use an external scheduler for now")
+        run_ctx = build_context(ctx.output, ctx.config_path, name)
+        mode = run_ctx.cfg["agent"].get("mode", "dry-run")
+        deploy_percent = float(run_ctx.cfg.get("execution", {}).get("deploy_percent", 10.0))
+        should_plan = dry_run or mode in {"dry-run", "paper"} or execute
+        payload = _agent_run_payload(run_ctx, deploy_percent if should_plan else None)
+
+        if execute:
+            if mode != "live":
+                raise ValueError(f"agent '{name}' mode is {mode}; set mode='live' before executing")
+            if "plan" not in payload:
+                raise ValueError(payload.get("plan_error", "could not build deploy plan"))
+            confirm_or_abort(f"Broadcast agent '{name}' deploy transaction(s)?", yes, run_ctx.output)
+            with _wallet_lock(run_ctx):
+                payload["execution"] = run_ctx.agent().execute_deploy_plan(payload["plan"])
+
+        if run_ctx.output == OutputFormat.json:
+            echo_json(payload)
+        else:
+            row = {
+                "agent": payload["agent"],
+                "wallet": payload["wallet"],
+                "mode": payload["mode"],
+                "idle": format_usd(payload["state"]["idle_assets"]["usdc_balance"]),
+                "positions": payload["state"]["positions_count"],
+                "top_vault": payload["top_opportunity"]["vault_name"] if payload["top_opportunity"] else "—",
+                "top_apy": format_apy(payload["top_opportunity"]["apy"]) if payload["top_opportunity"] else "—",
+                "plan": payload.get("plan", {}).get("status") or payload.get("plan_error", "—"),
+            }
+            print_table([row])
+    _run(inner)
+
+
+@agent_app.command("compare")
+def agent_compare(names: list[str] = typer.Argument(..., help="Agent profile names to compare")):
+    """Compare top opportunity and wallet state across profiles."""
+    def inner(ctx: CliContext):
+        rows = []
+        payload = []
+        for name in names:
+            run_ctx = build_context(ctx.output, ctx.config_path, name)
+            data = _agent_run_payload(run_ctx, None)
+            payload.append(data)
+            top = data["top_opportunity"]
+            rows.append({
+                "agent": name,
+                "wallet": data["wallet"],
+                "mode": data["mode"],
+                "idle": format_usd(data["state"]["idle_assets"]["usdc_balance"]),
+                "positions": data["state"]["positions_count"],
+                "top_vault": top["vault_name"] if top else "—",
+                "top_apy": format_apy(top["apy"]) if top else "—",
+            })
+        if ctx.output == OutputFormat.json:
+            echo_json(payload)
+        else:
+            print_table(rows)
     _run(inner)
 
 
@@ -343,7 +536,7 @@ def config_show():
     """Show effective configuration."""
     ctx = _ctx()
     if ctx.output == OutputFormat.json:
-        echo_json(ctx.cfg)
+        echo_json(config_mod.sanitize_config(ctx.cfg))
     else:
         rows = []
         for section, values in ctx.cfg.items():
@@ -358,7 +551,7 @@ def config_show():
 def config_path():
     """Print the active config path."""
     ctx = _ctx()
-    path = ctx.config_path or config_mod.default_config_path()
+    path = config_mod.agent_config_path(ctx.agent_name) if ctx.agent_name else (ctx.config_path or config_mod.default_config_path())
     if ctx.output == OutputFormat.json:
         echo_json({"path": str(path)})
     else:
@@ -369,10 +562,13 @@ def config_path():
 def config_set(key: str, value: str):
     """Set a config value, e.g. vaults.api_key or wallet.name."""
     def inner(ctx: CliContext):
-        config_mod.set_config_value(ctx.cfg, key, value)
-        path = config_mod.write_config(ctx.cfg, ctx.config_path)
+        parsed_value = config_mod.parse_config_value(value)
+        if ctx.agent_name:
+            path = config_mod.set_config_file_value(config_mod.agent_config_path(ctx.agent_name), key, parsed_value)
+        else:
+            path = config_mod.set_config_file_value(ctx.config_path or config_mod.default_config_path(), key, parsed_value)
         if ctx.output == OutputFormat.json:
-            echo_json({"path": str(path), "key": key, "value": value})
+            echo_json({"path": str(path), "key": key, "value": parsed_value})
         else:
             typer.echo(f"Set {key} in {path}")
     _run(inner)
