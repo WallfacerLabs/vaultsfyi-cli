@@ -32,16 +32,41 @@ PREFERENCE_KEYS = {
     "asset",
     "asset_address",
     "min_deposit_usd",
+    "page",
+    "per_page",
+    "allowed_assets",
+    "disallowed_assets",
+    "allowed_networks",
+    "disallowed_networks",
+    "allowed_protocols",
+    "disallowed_protocols",
     "min_apy",
     "max_apy",
     "min_tvl",
+    "max_tvl",
+    "min_vault_score",
     "apy_interval",
     "only_transactional",
+    "only_app_featured",
+    "allow_corrupted",
+    "allow_vaults_with_warnings",
+    "tags",
+    "curators",
+    "sort_order",
+    "sort_by",
     "vault_whitelist",
-    "allowed_protocols",
     "blocked_protocols",
     "allowed_curators",
 }
+
+PREFERENCE_KEY_ALIASES = {
+    "blocked_protocols": "disallowed_protocols",
+    "allowed_curators": "curators",
+}
+
+
+def _address_key(address: str | None) -> str:
+    return (address or "").lower()
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -71,7 +96,10 @@ def apply_preference(cfg: dict[str, Any], preference_name: str | None) -> dict[s
     preference = preferences[preference_name]
     for key, value in preference.items():
         if key in PREFERENCE_KEYS:
-            resolved.setdefault("strategy", {})[key] = value
+            target_key = PREFERENCE_KEY_ALIASES.get(key, key)
+            if target_key != key and preference.get(target_key) not in (None, "", []):
+                continue
+            resolved.setdefault("strategy", {})[target_key] = value
     resolved.setdefault("active_preference", {})["name"] = preference_name
     resolved["active_preference"]["filters"] = preference
     return resolved
@@ -118,19 +146,29 @@ def build_candidate_actions(agent, cfg: dict[str, Any], opportunities: list[dict
     idle_usd = float(idle_assets.get("usdc_balance", 0))
     min_deposit = float(cfg.get("strategy", {}).get("min_deposit_usd", 0.10))
     max_agent_deploy = cfg.get("agent", {}).get("max_deploy_usd")
+    max_position_pct = cfg.get("agent", {}).get("max_position_pct")
     max_single = cfg.get("risk", {}).get("max_single_vault_usd")
     caps = [float(v) for v in [max_agent_deploy, max_single] if v is not None]
+    portfolio_value = idle_usd + sum(float(position.get("balance_usd", 0)) for position in positions)
+    position_cap_usd = None
+    if max_position_pct is not None and portfolio_value > 0:
+        position_cap_usd = portfolio_value * (float(max_position_pct) / 100)
+        caps.append(position_cap_usd)
     deploy_amount = idle_usd if not caps else min(idle_usd, min(caps))
+    existing_vault_addresses = {_address_key(position.get("vault_address")) for position in positions}
 
     for vault in opportunities[:10]:
+        vault_address = vault.get("vault_address")
+        if not vault_address or _address_key(vault_address) in existing_vault_addresses:
+            continue
         if deploy_amount >= min_deposit:
             c = _cost("deploy_idle", cfg)
             annual_gain = deploy_amount * float(vault.get("apy", 0))
             breakeven = _finite_days(c["tx_cost_usd"], annual_gain)
             candidates.append({
-                "id": f"deploy_idle:{vault['vault_address']}:{deploy_amount:.6f}",
+                "id": f"deploy_idle:{vault_address}:{deploy_amount:.6f}",
                 "type": "deploy_idle",
-                "target_vault_address": vault["vault_address"],
+                "target_vault_address": vault_address,
                 "target_vault_name": vault.get("vault_name"),
                 "target_apy": vault.get("apy"),
                 "amount_usd": deploy_amount,
@@ -151,7 +189,7 @@ def build_candidate_actions(agent, cfg: dict[str, Any], opportunities: list[dict
             continue
         for vault in opportunities[:10]:
             target_address = vault["vault_address"]
-            if target_address == source_address:
+            if _address_key(target_address) == _address_key(source_address):
                 continue
             target_apy = float(vault.get("apy", 0))
             apy_delta = target_apy - source_apy
@@ -160,7 +198,11 @@ def build_candidate_actions(agent, cfg: dict[str, Any], opportunities: list[dict
 
             full_amount = source_balance
             partial_amount = source_balance * (max_rebalance_pct / 100)
-            amounts = [("rebalance", full_amount)]
+            amounts = []
+            if position_cap_usd is None or full_amount <= position_cap_usd:
+                amounts.append(("rebalance", full_amount))
+            if position_cap_usd is not None:
+                partial_amount = min(partial_amount, position_cap_usd)
             if allow_partial and partial_amount < full_amount:
                 amounts.append(("partial_rebalance", partial_amount))
 
@@ -242,28 +284,51 @@ def validate_decision(decision: dict[str, Any], packet: dict[str, Any]) -> dict[
         candidate = None
 
     if candidate:
+        candidate_type = candidate.get("type")
+        decision_action = decision.get("action")
+        if not decision_action:
+            violations.append("decision action is required")
+        elif decision_action != candidate_type:
+            violations.append("decision action does not match candidate type")
+        if candidate_type not in {"hold", "deploy_idle", "rebalance", "partial_rebalance"}:
+            violations.append("candidate type is unsupported")
+
         target = candidate.get("target_vault_address")
         if target:
-            eligible = {v["vault_address"] for v in packet.get("eligible_vaults", [])}
-            if target not in eligible:
+            eligible = {_address_key(v.get("vault_address")) for v in packet.get("eligible_vaults", [])}
+            if _address_key(target) not in eligible:
                 violations.append("target vault is not in eligible_vaults")
         source = candidate.get("source_vault_address")
         if source:
-            sources = {p["vault_address"] for p in packet.get("current_positions", [])}
-            if source not in sources:
+            sources = {_address_key(p.get("vault_address")) for p in packet.get("current_positions", [])}
+            if _address_key(source) not in sources:
                 violations.append("source vault is not in current_positions")
-        amount = float(candidate.get("amount_usd", 0))
+        try:
+            amount = float(candidate.get("amount_usd", 0))
+        except (TypeError, ValueError):
+            amount = math.nan
         if amount < 0 or not math.isfinite(amount):
             violations.append("candidate amount is invalid")
+        elif candidate_type != "hold" and amount <= 0:
+            violations.append("candidate amount must be positive")
 
         dc = packet.get("constraints", {}).get("decision", {})
         breakeven = candidate.get("breakeven_days")
         if candidate.get("type") != "hold" and breakeven is not None:
-            if breakeven > float(dc.get("max_breakeven_days", 30)):
+            try:
+                breakeven_value = float(breakeven)
+            except (TypeError, ValueError):
+                violations.append("breakeven_days is invalid")
+                breakeven_value = None
+            if breakeven_value is not None and breakeven_value > float(dc.get("max_breakeven_days", 30)):
                 violations.append("breakeven_days exceeds max_breakeven_days")
         if candidate.get("type") != "hold":
-            net = float(candidate.get("annual_yield_gain_usd", 0)) - float(candidate.get("estimated_cost", {}).get("tx_cost_usd", 0))
-            if net < float(dc.get("min_net_gain_usd", 1.0)):
+            try:
+                net = float(candidate.get("annual_yield_gain_usd", 0)) - float(candidate.get("estimated_cost", {}).get("tx_cost_usd", 0))
+            except (TypeError, ValueError):
+                violations.append("net expected gain is invalid")
+                net = None
+            if net is not None and net < float(dc.get("min_net_gain_usd", 1.0)):
                 violations.append("net expected gain is below min_net_gain_usd")
 
     return {
@@ -289,8 +354,14 @@ def plan_decision(agent, decision: dict[str, Any], packet: dict[str, Any]) -> di
         return {"valid": True, "validation": validation, "transactions": plan["transactions"], "status": "planned", "plan": plan}
 
     if action in {"rebalance", "partial_rebalance"}:
-        redeem_plan = agent.prepare_redeem_by_vault(candidate["source_vault_address"], amount_usd=float(candidate["amount_usd"]))
-        deploy_plan = agent.prepare_deploy_to_vault(candidate["target_vault_address"], float(candidate["amount_usd"]))
+        amount_usd = float(candidate["amount_usd"])
+        idle_usd = float(packet.get("idle_assets", {}).get("usdc_balance", 0))
+        redeem_plan = agent.prepare_redeem_by_vault(candidate["source_vault_address"], amount_usd=amount_usd)
+        deploy_plan = agent.prepare_deploy_to_vault(
+            candidate["target_vault_address"],
+            amount_usd,
+            available_usd=idle_usd + amount_usd,
+        )
         transactions = redeem_plan["transactions"] + deploy_plan["transactions"]
         return {
             "valid": True,

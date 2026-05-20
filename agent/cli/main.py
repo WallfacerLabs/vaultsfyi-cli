@@ -85,10 +85,18 @@ def _effective_deploy_percent(ctx: CliContext, agent, requested_percent: float) 
         ctx.cfg.get("risk", {}).get("max_single_vault_usd"),
     ]
     caps = [float(cap) for cap in caps if cap is not None]
-    if not caps:
+    max_position_pct = ctx.cfg.get("agent", {}).get("max_position_pct")
+    if not caps and max_position_pct is None:
         return requested_percent
 
     idle = agent.get_idle_assets()["usdc_balance"]
+    if max_position_pct is not None:
+        positions_value = sum(float(position.get("balance_usd", 0)) for position in agent.get_positions())
+        portfolio_value = idle + positions_value
+        if portfolio_value > 0:
+            caps.append(portfolio_value * (float(max_position_pct) / 100))
+    if not caps:
+        return requested_percent
     if idle <= 0:
         return requested_percent
     requested_usd = idle * (requested_percent / 100)

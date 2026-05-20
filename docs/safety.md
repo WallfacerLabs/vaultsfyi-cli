@@ -84,5 +84,7 @@ Require confirmation:
 ## Known limitations
 
 - Cost estimates use configured gas assumptions and ETH/USD price unless richer data is supplied.
+- Withdrawability, vault age, and incentive-heavy APY filters depend on vaults.fyi response fields; explicit filters fail closed when required data is absent.
 - Withdrawal fees/cooldowns are included only when data is available.
+- `slippage_bps` and `cooldown_after_tx` are configuration placeholders for transaction endpoint support and external scheduler policy.
 - The decision system is conservative by design. Invalid or marginal decisions should become `hold`.

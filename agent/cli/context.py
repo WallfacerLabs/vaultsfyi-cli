@@ -19,8 +19,8 @@ class CliContext:
     cfg: dict
 
     def agent(self) -> Agent:
-        config_mod.export_env(self.cfg)
-        return Agent(config=config_mod.agent_config(self.cfg))
+        with config_mod.exported_env(self.cfg):
+            return Agent(config=config_mod.agent_config(self.cfg))
 
     def with_preference(self, preference_name: str | None) -> "CliContext":
         if not preference_name:

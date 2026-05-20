@@ -90,14 +90,13 @@ class TransactionAPI:
         transactions = []
         actions = response.get('actions', [])
 
-        # If multiple steps exist, only use the first/default one (Q11)
         if actions:
-            for action in actions:
-                tx = action.get('tx', {})
-                transactions.append({
-                    'to': tx.get('to'),
-                    'data': tx.get('data'),
-                    'value': tx.get('value', '0'),
-                })
+            action = actions[0]
+            tx = action.get('tx', {})
+            transactions.append({
+                'to': tx.get('to'),
+                'data': tx.get('data'),
+                'value': tx.get('value', '0'),
+            })
 
         return transactions

@@ -4,11 +4,36 @@ from __future__ import annotations
 
 import os
 import tomllib
+from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
 import tomli_w
+
+DETAILED_VAULT_FILTER_DEFAULTS: dict[str, Any] = {
+    "page": None,
+    "per_page": None,
+    "allowed_assets": [],
+    "disallowed_assets": [],
+    "allowed_protocols": [],
+    "disallowed_protocols": [],
+    "min_tvl": 1_000_000,
+    "max_tvl": None,
+    "min_apy": 0.01,
+    "max_apy": None,
+    "min_vault_score": None,
+    "only_transactional": True,
+    "only_app_featured": None,
+    "allow_corrupted": False,
+    "allow_vaults_with_warnings": None,
+    "allowed_networks": [],
+    "disallowed_networks": [],
+    "tags": [],
+    "curators": [],
+    "sort_order": None,
+    "sort_by": None,
+}
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "agent": {
@@ -35,15 +60,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "asset": "USDC",
         "asset_address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
         "min_deposit_usd": 0.10,
-        "min_apy": 0.01,
-        "max_apy": None,
-        "min_tvl": 1_000_000,
         "apy_interval": "1day",
-        "only_transactional": True,
         "vault_whitelist": [],
-        "allowed_protocols": [],
         "blocked_protocols": [],
         "allowed_curators": [],
+        **DETAILED_VAULT_FILTER_DEFAULTS,
     },
     "risk": {
         "max_single_vault_usd": None,
@@ -219,12 +240,8 @@ def list_agent_profiles() -> list[dict[str, Any]]:
 
 def new_preference() -> dict[str, Any]:
     return {
-        "min_tvl": 1_000_000,
-        "min_apy": 0.01,
-        "max_apy": None,
-        "only_transactional": True,
+        **deepcopy(DETAILED_VAULT_FILTER_DEFAULTS),
         "vault_whitelist": [],
-        "allowed_protocols": [],
         "blocked_protocols": [],
         "allowed_curators": [],
     }
@@ -237,7 +254,16 @@ def list_preferences(cfg: dict[str, Any]) -> list[dict[str, Any]]:
             "min_apy": pref.get("min_apy"),
             "max_apy": pref.get("max_apy"),
             "min_tvl": pref.get("min_tvl"),
+            "max_tvl": pref.get("max_tvl"),
+            "min_vault_score": pref.get("min_vault_score"),
             "only_transactional": pref.get("only_transactional", True),
+            "only_app_featured": pref.get("only_app_featured"),
+            "allowed_assets": pref.get("allowed_assets") or pref.get("asset"),
+            "allowed_networks": pref.get("allowed_networks") or pref.get("network"),
+            "allowed_protocols": pref.get("allowed_protocols"),
+            "disallowed_protocols": pref.get("disallowed_protocols") or pref.get("blocked_protocols"),
+            "tags": pref.get("tags"),
+            "curators": pref.get("curators") or pref.get("allowed_curators"),
         }
         for name, pref in sorted(cfg.get("preferences", {}).items())
     ]
@@ -265,18 +291,53 @@ def new_agent_profile(agent_name: str, wallet_name: str | None = None, mode: str
 
 def agent_config(cfg: dict[str, Any]) -> dict[str, Any]:
     strategy = cfg["strategy"]
+    risk = cfg.get("risk", {})
     display = cfg["display"]
+
+    def list_value(value: Any) -> list[Any]:
+        if value is None or value == "":
+            return []
+        if isinstance(value, list):
+            return value
+        if isinstance(value, (tuple, set)):
+            return list(value)
+        if isinstance(value, str) and "," in value:
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return [value]
+
+    allowed_assets = list_value(strategy.get("allowed_assets")) or [strategy.get("asset", "USDC")]
+    allowed_networks = list_value(strategy.get("allowed_networks")) or [strategy.get("network", "base")]
     criteria = {
+        "page": strategy.get("page"),
+        "per_page": strategy.get("per_page"),
+        "allowed_assets": allowed_assets,
+        "disallowed_assets": list_value(strategy.get("disallowed_assets")),
+        "allowed_networks": allowed_networks,
+        "disallowed_networks": list_value(strategy.get("disallowed_networks")),
         "min_apy": float(strategy.get("min_apy", 0.01)),
         "min_tvl": float(strategy.get("min_tvl", 1_000_000)),
         "apy_interval": strategy.get("apy_interval", "1day"),
         "only_transactional": bool(strategy.get("only_transactional", True)),
-        "allowed_protocols": strategy.get("allowed_protocols", []),
-        "blocked_protocols": strategy.get("blocked_protocols", []),
-        "allowed_curators": strategy.get("allowed_curators", []),
+        "allowed_protocols": list_value(strategy.get("allowed_protocols")),
+        "disallowed_protocols": list_value(strategy.get("disallowed_protocols")) or list_value(strategy.get("blocked_protocols")),
+        "blocked_protocols": list_value(strategy.get("blocked_protocols")),
+        "curators": list_value(strategy.get("curators")) or list_value(strategy.get("allowed_curators")),
+        "allowed_curators": list_value(strategy.get("allowed_curators")),
+        "tags": list_value(strategy.get("tags")),
+        "sort_order": strategy.get("sort_order"),
+        "sort_by": strategy.get("sort_by"),
+        "min_vault_score": strategy.get("min_vault_score"),
+        "only_app_featured": strategy.get("only_app_featured"),
+        "allow_corrupted": strategy.get("allow_corrupted"),
+        "allow_vaults_with_warnings": strategy.get("allow_vaults_with_warnings"),
+        "require_withdrawable": bool(risk.get("require_withdrawable", False)),
+        "min_vault_age_days": risk.get("min_vault_age_days"),
+        "allow_incentive_heavy_yield": bool(risk.get("allow_incentive_heavy_yield", True)),
     }
     if strategy.get("max_apy") is not None:
         criteria["max_apy"] = float(strategy["max_apy"])
+    if strategy.get("max_tvl") is not None:
+        criteria["max_tvl"] = float(strategy["max_tvl"])
     return {
         "vaults_api_url": cfg["vaults"].get("api_url", "https://api.vaults.fyi"),
         "network": strategy.get("network", "base"),
@@ -293,12 +354,12 @@ def agent_config(cfg: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def export_env(cfg: dict[str, Any]) -> None:
+def _env_values(cfg: dict[str, Any]) -> dict[str, Any]:
     wallet = cfg["wallet"]
     network = cfg["network"]
     vaults = cfg["vaults"]
 
-    values = {
+    return {
         "OWS_WALLET": wallet.get("name"),
         "OWS_CHAIN": wallet.get("chain"),
         "OWS_VAULT_PATH": wallet.get("vault_path"),
@@ -307,9 +368,30 @@ def export_env(cfg: dict[str, Any]) -> None:
         "VAULTS_API_KEY": vaults.get("api_key"),
         "VAULTS_API_URL": vaults.get("api_url"),
     }
-    for key, value in values.items():
+
+
+def export_env(cfg: dict[str, Any]) -> None:
+    for key, value in _env_values(cfg).items():
         if value is not None and value != "":
             os.environ[key] = str(value)
+        else:
+            os.environ.pop(key, None)
+
+
+@contextmanager
+def exported_env(cfg: dict[str, Any]):
+    keys = _env_values(cfg).keys()
+    missing = object()
+    previous = {key: os.environ.get(key, missing) for key in keys}
+    export_env(cfg)
+    try:
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is missing:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 def set_config_value(cfg: dict[str, Any], dotted_key: str, value: Any) -> None:

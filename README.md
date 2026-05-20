@@ -187,7 +187,7 @@ api_url = "https://api.vaults.fyi"
 name = "default"
 mode = "dry-run" # dry-run | paper | live
 # max_deploy_usd = 100
-# max_position_pct = 25
+# max_position_pct = 25 # cap deploy/rebalance target size as a percent of portfolio value
 
 [strategy]
 network = "base"
@@ -197,24 +197,38 @@ min_deposit_usd = 0.10
 min_apy = 0.01
 # max_apy = 0.25
 min_tvl = 1000000
-apy_interval = "1day"
+# max_tvl = 50000000
+apy_interval = "1day" # preferred when API returns interval-specific APY; total APY fallback
 only_transactional = true
+# only_app_featured = true
+allow_corrupted = false
+# allow_vaults_with_warnings = false
+# min_vault_score = 8
+allowed_assets = [] # defaults to [asset] when empty
+disallowed_assets = []
+allowed_networks = [] # defaults to [network] when empty
+disallowed_networks = []
+tags = []
+curators = []
+# sort_by = "apy7day" # tvl | apy1day | apy7day | apy30day
+# sort_order = "desc" # asc | desc
 vault_whitelist = []
 allowed_protocols = []
-blocked_protocols = []
-allowed_curators = []
+disallowed_protocols = []
+blocked_protocols = [] # legacy alias for disallowed_protocols
+allowed_curators = [] # legacy alias for curators
 
 [risk]
 # max_single_vault_usd = 100
-require_withdrawable = false
-# min_vault_age_days = 14
-allow_incentive_heavy_yield = true
+require_withdrawable = false # when true, vaults without withdrawability data are excluded
+# min_vault_age_days = 14 # when set, vaults without age data are excluded
+allow_incentive_heavy_yield = true # when false, reward-heavy APY is excluded when API exposes APY components
 
 [execution]
 deploy_percent = 10.0
 require_confirmation = true
-slippage_bps = 50
-cooldown_after_tx = "10m"
+slippage_bps = 50 # reserved for transaction endpoint support
+cooldown_after_tx = "10m" # advisory for external schedulers
 
 [decision]
 min_net_gain_usd = 1.0
@@ -232,9 +246,12 @@ min_tvl = 10000000
 min_apy = 0.02
 max_apy = 0.15
 only_transactional = true
+allowed_assets = ["USDC"]
+allowed_networks = ["base", "mainnet"]
+tags = ["stablecoin"]
+curators = []
 allowed_protocols = ["aave", "morpho", "euler"]
-blocked_protocols = []
-allowed_curators = []
+disallowed_protocols = []
 vault_whitelist = []
 
 [display]

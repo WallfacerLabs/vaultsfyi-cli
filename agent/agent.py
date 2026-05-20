@@ -143,16 +143,35 @@ class Agent:
             "opportunities_count": len(opportunities),
         }
 
-    def prepare_deploy_to_vault(self, vault_address: str, amount_usd: float) -> dict:
+    def _asset_tokens_for_usd(self, amount_usd: float, idle_info: dict) -> float:
+        idle_usd = float(idle_info.get("usdc_balance", 0))
+        idle_tokens = float(idle_info.get("balance_tokens", 0))
+        if idle_usd > 0 and idle_tokens > 0:
+            return amount_usd * (idle_tokens / idle_usd)
+        return amount_usd
+
+    def prepare_deploy_to_vault(
+        self,
+        vault_address: str,
+        amount_usd: float,
+        *,
+        available_usd: float | None = None,
+        amount_tokens: float | None = None,
+    ) -> dict:
         """Build a deployment plan to a specific validated vault address."""
         is_sufficient, error_msg = self.executor.validate_gas_balance()
         if not is_sufficient:
             raise ValueError(error_msg)
 
         idle_info = self.get_idle_assets()
-        idle_usdc = idle_info["usdc_balance"]
-        if amount_usd > idle_usdc:
-            raise ValueError(f"Deploy amount {format_usd(amount_usd)} exceeds idle balance {format_usd(idle_usdc)}")
+        idle_usdc = float(idle_info["usdc_balance"])
+        available_balance = idle_usdc if available_usd is None else float(available_usd)
+        available_label = "idle balance" if available_usd is None else "projected available balance"
+        if amount_usd > available_balance:
+            raise ValueError(
+                f"Deploy amount {format_usd(amount_usd)} exceeds "
+                f"{available_label} {format_usd(available_balance)}"
+            )
         if amount_usd < self.min_deposit_usd:
             raise ValueError(
                 f"Deposit amount {format_usd(amount_usd, self.display_decimals)} "
@@ -164,10 +183,14 @@ class Agent:
         if selected_vault is None:
             raise ValueError(f"Vault {vault_address} is not in the current eligible opportunity set")
 
+        deploy_amount_tokens = amount_tokens
+        if deploy_amount_tokens is None:
+            deploy_amount_tokens = self._asset_tokens_for_usd(amount_usd, idle_info)
+
         transactions = self.transaction_api.generate_deposit_tx(
             self.wallet.address,
             selected_vault["vault_address"],
-            amount_usd,
+            deploy_amount_tokens,
             self.asset_address,
             self.network,
         )
@@ -179,7 +202,7 @@ class Agent:
             "action": "deploy_idle",
             "wallet": self.wallet.address,
             "amount_usd": amount_usd,
-            "amount_tokens": amount_usd,
+            "amount_tokens": deploy_amount_tokens,
             "vault": selected_vault,
             "reason": f"Deploying to validated target {selected_vault['vault_name']}",
             "transactions": transactions,

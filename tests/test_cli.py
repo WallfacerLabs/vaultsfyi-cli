@@ -1,9 +1,12 @@
 import json
+import os
 
 from typer.testing import CliRunner
 
+from agent.cli import config as config_mod
 from agent.cli.main import app
 from agent.cli.context import CliContext
+from agent.decision import apply_preference, build_candidate_actions, plan_decision, validate_decision
 
 runner = CliRunner()
 
@@ -80,9 +83,41 @@ class FakeAgent:
     def execute_redeem_plan(self, plan):
         return {**plan, "status": "submitted", "tx_hashes": ["0x456"]}
 
+    def prepare_redeem_by_vault(self, vault_address, amount_usd=None, percentage=None):
+        return {
+            "action": "redeem",
+            "position": self.get_positions()[0],
+            "amount_usd": amount_usd,
+            "transactions": [{"to": vault_address, "data": "0xredeem", "value": "0"}],
+        }
+
+    def prepare_deploy_to_vault(self, vault_address, amount_usd, **kwargs):
+        return {
+            "action": "deploy_idle",
+            "vault": {"vault_address": vault_address, "vault_name": "Target Vault"},
+            "amount_usd": amount_usd,
+            "available_usd": kwargs.get("available_usd"),
+            "transactions": [{"to": vault_address, "data": "0xdeploy", "value": "0"}],
+        }
+
 
 def fake_agent(self):
     return FakeAgent()
+
+
+def test_exported_env_restores_and_clears_managed_values(monkeypatch):
+    monkeypatch.setenv("OWS_VAULT_PATH", "/external-vault")
+    cfg = {
+        "wallet": {"name": "agent-one", "chain": "base", "vault_path": None, "ows_cli_path": None},
+        "network": {"rpc_url": "https://rpc.example"},
+        "vaults": {"api_key": None, "api_url": "https://api.example"},
+    }
+
+    with config_mod.exported_env(cfg):
+        assert os.environ["OWS_WALLET"] == "agent-one"
+        assert "OWS_VAULT_PATH" not in os.environ
+
+    assert os.environ["OWS_VAULT_PATH"] == "/external-vault"
 
 
 def test_help_lists_core_commands():
@@ -119,7 +154,8 @@ def test_deploy_json_requires_yes(monkeypatch):
     assert "--yes" in data["error"]
 
 
-def test_deploy_json_with_yes(monkeypatch):
+def test_deploy_json_with_yes(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
     monkeypatch.setattr(CliContext, "agent", fake_agent)
     result = runner.invoke(app, ["-o", "json", "deploy", "--percent", "10", "--yes"])
     assert result.exit_code == 0
@@ -208,6 +244,62 @@ def test_preference_init_set_and_list(monkeypatch, tmp_path):
     assert rows[0]["min_tvl"] == 10_000_000
 
 
+def test_preference_overlay_supports_detailed_vault_filters():
+    cfg = config_mod.DEFAULT_CONFIG | {
+        "preferences": {
+            "detailed": {
+                "allowed_assets": ["USDC", "WETH"],
+                "disallowed_assets": ["DAI"],
+                "allowed_networks": ["base"],
+                "disallowed_networks": ["polygon"],
+                "allowed_protocols": ["morpho"],
+                "disallowed_protocols": ["aave"],
+                "blocked_protocols": [],
+                "min_tvl": 5_000_000,
+                "max_tvl": 50_000_000,
+                "min_apy": 0.02,
+                "max_apy": 0.15,
+                "min_vault_score": 8,
+                "only_transactional": True,
+                "only_app_featured": True,
+                "allow_corrupted": False,
+                "allow_vaults_with_warnings": False,
+                "tags": ["stablecoin"],
+                "curators": ["steakhouse"],
+                "allowed_curators": [],
+                "sort_by": "apy7day",
+                "sort_order": "desc",
+                "page": 1,
+                "per_page": 25,
+            }
+        }
+    }
+
+    resolved = apply_preference(cfg, "detailed")
+    criteria = config_mod.agent_config(resolved)["criteria"]
+
+    assert criteria["allowed_assets"] == ["USDC", "WETH"]
+    assert criteria["disallowed_assets"] == ["DAI"]
+    assert criteria["allowed_networks"] == ["base"]
+    assert criteria["disallowed_networks"] == ["polygon"]
+    assert criteria["allowed_protocols"] == ["morpho"]
+    assert criteria["disallowed_protocols"] == ["aave"]
+    assert criteria["min_tvl"] == 5_000_000
+    assert criteria["max_tvl"] == 50_000_000
+    assert criteria["min_apy"] == 0.02
+    assert criteria["max_apy"] == 0.15
+    assert criteria["min_vault_score"] == 8
+    assert criteria["only_app_featured"] is True
+    assert criteria["allow_corrupted"] is False
+    assert criteria["allow_vaults_with_warnings"] is False
+    assert criteria["tags"] == ["stablecoin"]
+    assert criteria["curators"] == ["steakhouse"]
+    assert criteria["sort_by"] == "apy7day"
+    assert criteria["sort_order"] == "desc"
+    assert criteria["page"] == 1
+    assert criteria["per_page"] == 25
+
+
 def test_decision_packet_and_validate(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setattr(CliContext, "agent", fake_agent)
@@ -232,3 +324,67 @@ def test_decision_packet_and_validate(monkeypatch, tmp_path):
     result = runner.invoke(app, ["-o", "json", "validate-decision", str(decision_path), "--packet", str(packet_path)])
     assert result.exit_code != 0
     assert json.loads(result.stdout)["valid"] is False
+
+
+def test_validate_decision_rejects_action_mismatch():
+    packet = {
+        "schema_version": "vaultsfyi.decision-packet.v1",
+        "eligible_vaults": [],
+        "current_positions": [],
+        "candidate_actions": [{"id": "hold", "type": "hold", "amount_usd": 0}],
+        "constraints": {"decision": {"min_net_gain_usd": 0}},
+    }
+    decision = {"schema_version": "vaultsfyi.decision.v1", "candidate_id": "hold", "action": "deploy_idle"}
+    result = validate_decision(decision, packet)
+    assert result["valid"] is False
+    assert "decision action does not match candidate type" in result["violations"]
+
+
+def test_candidate_actions_do_not_deploy_idle_into_existing_positions():
+    opportunities = [
+        {"vault_address": "0xEXISTING", "vault_name": "Existing", "apy": 0.08},
+        {"vault_address": "0xNEW", "vault_name": "New", "apy": 0.07},
+    ]
+    positions = [{"vault_address": "0xexisting", "balance_usd": 100.0, "apy": 0.03}]
+    idle = {"usdc_balance": 100.0}
+    cfg = {
+        "agent": {"max_position_pct": 10},
+        "strategy": {"min_deposit_usd": 0.1},
+        "decision": {"min_apy_improvement": 0.01},
+    }
+
+    candidates = build_candidate_actions(FakeAgent(), cfg, opportunities, positions, idle)
+    deploy_candidates = [c for c in candidates if c["type"] == "deploy_idle"]
+    assert [c["target_vault_address"] for c in deploy_candidates] == ["0xNEW"]
+    assert deploy_candidates[0]["amount_usd"] == 20.0
+
+
+def test_plan_decision_rebalance_uses_projected_available_idle():
+    packet = {
+        "schema_version": "vaultsfyi.decision-packet.v1",
+        "idle_assets": {"usdc_balance": 1.0},
+        "eligible_vaults": [{"vault_address": "0xtarget"}],
+        "current_positions": [{"vault_address": "0xsource"}],
+        "candidate_actions": [
+            {
+                "id": "partial_rebalance:0xsource:0xtarget:5.000000",
+                "type": "partial_rebalance",
+                "source_vault_address": "0xsource",
+                "target_vault_address": "0xtarget",
+                "amount_usd": 5.0,
+                "annual_yield_gain_usd": 5.0,
+                "breakeven_days": 1,
+                "estimated_cost": {"tx_cost_usd": 0.0},
+            }
+        ],
+        "constraints": {"decision": {"min_net_gain_usd": 0, "max_breakeven_days": 30}},
+    }
+    decision = {
+        "schema_version": "vaultsfyi.decision.v1",
+        "candidate_id": "partial_rebalance:0xsource:0xtarget:5.000000",
+        "action": "partial_rebalance",
+    }
+
+    result = plan_decision(FakeAgent(), decision, packet)
+    assert result["valid"] is True
+    assert result["deploy_plan"]["available_usd"] == 6.0
