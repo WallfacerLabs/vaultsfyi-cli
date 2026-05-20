@@ -17,6 +17,15 @@ vaultsfyi preference set blue-chip allowed_protocols aave,morpho,euler
 vaultsfyi preference show blue-chip
 ```
 
+Create a capped bucket-style preference:
+
+```bash
+vaultsfyi preference init degen
+vaultsfyi preference set degen allowed_protocols spicy-protocol
+vaultsfyi preference set degen bucket_max_pct 10
+vaultsfyi preference set degen bucket_tolerance_pct 5
+```
+
 ## Use a preference
 
 ```bash
@@ -54,6 +63,8 @@ curators = []
 # sort_order = "desc" # asc | desc
 # page = 0
 # per_page = 50
+# bucket_max_pct = 10 # no new deploy/rebalance-in above 10% portfolio exposure
+# bucket_tolerance_pct = 5 # drift band; status becomes over_tolerance above 15%
 ```
 
 ## Semantics
@@ -80,8 +91,35 @@ curators = []
 - `sort_by`: sort field, one of `tvl`, `apy1day`, `apy7day`, `apy30day`
 - `sort_order`: `asc` or `desc`
 - `vault_whitelist`: if non-empty, only these vault addresses are allowed
+- `bucket_max_pct`: optional maximum active allocation for this preference bucket as a percent of total portfolio value. New deploys and rebalances into the preference are capped at the remaining room below this value.
+- `bucket_tolerance_pct`: optional absolute percentage-point drift band above `bucket_max_pct`. For example, `bucket_max_pct = 10` and `bucket_tolerance_pct = 5` allows market growth to 15% before the packet reports `over_tolerance`. It does not allow new capital above 10%.
 
-These names are snake_case versions of the vaults.fyi `/v2/detailed-vaults` filters. The CLI sends the filters supported by the active vaults.fyi endpoint and applies the remaining detailed-vault filters locally to the returned opportunities.
+Most filter names are snake_case versions of the vaults.fyi `/v2/detailed-vaults` filters. The CLI sends the filters supported by the active vaults.fyi endpoint and applies the remaining detailed-vault filters locally to the returned opportunities. Bucket fields are local CLI policy and are not sent as vaults.fyi API filters.
+
+## Bucket Limits
+
+Preference buckets are enforced for commands that select a preference:
+
+```bash
+vaultsfyi deploy --percent 10 --preference degen
+vaultsfyi decision-packet --preference degen -o json
+```
+
+The CLI estimates bucket exposure by matching current position vault addresses
+against the selected preference's eligible vaults and any `vault_whitelist`
+addresses. If a degen bucket has `bucket_max_pct = 10`, a 100 USDC portfolio
+with 8 USDC already in degen vaults can only add 2 USDC more, even if the
+requested deploy size is larger.
+
+The tolerance band is informational for the decision packet:
+
+- below `bucket_max_pct`: `under_limit`
+- at or above `bucket_max_pct`, up to `bucket_max_pct + bucket_tolerance_pct`: `within_tolerance`
+- above the tolerance band: `over_tolerance`
+
+The current candidate set can prevent additional exposure above the max. It
+does not yet emit a cross-preference "sell degen into blue-chip" candidate; that
+would require a multi-preference allocator view.
 
 ## Precedence
 

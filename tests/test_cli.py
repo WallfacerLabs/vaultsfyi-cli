@@ -6,7 +6,7 @@ from typer.testing import CliRunner
 from agent.cli import config as config_mod
 from agent.cli.main import app
 from agent.cli.context import CliContext
-from agent.decision import apply_preference, build_candidate_actions, plan_decision, validate_decision
+from agent.decision import apply_preference, build_candidate_actions, plan_decision, preference_bucket_state, validate_decision
 
 runner = CliRunner()
 
@@ -250,11 +250,17 @@ def test_preference_init_set_and_list(monkeypatch, tmp_path):
 
     result = runner.invoke(app, ["preference", "set", "blue-chip", "min_tvl", "10000000"])
     assert result.exit_code == 0
+    result = runner.invoke(app, ["preference", "set", "blue-chip", "bucket_max_pct", "10"])
+    assert result.exit_code == 0
+    result = runner.invoke(app, ["preference", "set", "blue-chip", "bucket_tolerance_pct", "5"])
+    assert result.exit_code == 0
 
     result = runner.invoke(app, ["-o", "json", "preference", "list"])
     rows = json.loads(result.stdout)
     assert rows[0]["name"] == "blue-chip"
     assert rows[0]["min_tvl"] == 10_000_000
+    assert rows[0]["bucket_max_pct"] == 10
+    assert rows[0]["bucket_tolerance_pct"] == 5
 
 
 def test_preference_overlay_supports_detailed_vault_filters():
@@ -284,6 +290,8 @@ def test_preference_overlay_supports_detailed_vault_filters():
                 "sort_order": "desc",
                 "page": 1,
                 "per_page": 25,
+                "bucket_max_pct": 10,
+                "bucket_tolerance_pct": 5,
             }
         }
     }
@@ -291,6 +299,8 @@ def test_preference_overlay_supports_detailed_vault_filters():
     resolved = apply_preference(cfg, "detailed")
     criteria = config_mod.agent_config(resolved)["criteria"]
 
+    assert "bucket_max_pct" not in resolved["strategy"]
+    assert resolved["active_preference"]["filters"]["bucket_max_pct"] == 10
     assert criteria["allowed_assets"] == ["USDC", "WETH"]
     assert criteria["disallowed_assets"] == ["DAI"]
     assert criteria["allowed_networks"] == ["base"]
@@ -339,6 +349,26 @@ def test_decision_packet_and_validate(monkeypatch, tmp_path):
     assert json.loads(result.stdout)["valid"] is False
 
 
+def test_decision_packet_includes_preference_bucket(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setattr(CliContext, "agent", fake_agent)
+    runner.invoke(app, ["preference", "init", "degen"])
+    runner.invoke(app, ["preference", "set", "degen", "bucket_max_pct", "10"])
+    runner.invoke(app, ["preference", "set", "degen", "bucket_tolerance_pct", "5"])
+
+    result = runner.invoke(app, ["-o", "json", "decision-packet", "--preference", "degen"])
+
+    assert result.exit_code == 0
+    packet = json.loads(result.stdout)
+    bucket = packet["constraints"]["preference_bucket"]
+    assert bucket["preference"] == "degen"
+    assert bucket["max_pct"] == 10.0
+    assert bucket["tolerance_pct"] == 5.0
+    assert bucket["current_usd"] == 10.0
+    assert bucket["remaining_deploy_usd"] == 1.0
+    assert bucket["status"] == "under_limit"
+
+
 def test_validate_decision_rejects_action_mismatch():
     packet = {
         "schema_version": "vaultsfyi.decision-packet.v1",
@@ -351,6 +381,52 @@ def test_validate_decision_rejects_action_mismatch():
     result = validate_decision(decision, packet)
     assert result["valid"] is False
     assert "decision action does not match candidate type" in result["violations"]
+
+
+def test_validate_decision_rejects_preference_bucket_capacity_violation():
+    packet = {
+        "schema_version": "vaultsfyi.decision-packet.v1",
+        "eligible_vaults": [{"vault_address": "0xDEGEN"}],
+        "current_positions": [],
+        "candidate_actions": [
+            {
+                "id": "deploy_idle:0xDEGEN:20.000000",
+                "type": "deploy_idle",
+                "target_vault_address": "0xDEGEN",
+                "amount_usd": 20.0,
+                "annual_yield_gain_usd": 10.0,
+                "breakeven_days": 1,
+                "estimated_cost": {"tx_cost_usd": 0.0},
+            }
+        ],
+        "constraints": {
+            "decision": {"min_net_gain_usd": 0, "max_breakeven_days": 30},
+            "preference_bucket": {"remaining_deploy_usd": 10.0, "matched_vault_addresses": ["0xdegen"]},
+        },
+    }
+    decision = {
+        "schema_version": "vaultsfyi.decision.v1",
+        "candidate_id": "deploy_idle:0xDEGEN:20.000000",
+        "action": "deploy_idle",
+    }
+
+    result = validate_decision(decision, packet)
+
+    assert result["valid"] is False
+    assert "candidate exceeds preference bucket remaining deploy capacity" in result["violations"]
+
+
+def test_deploy_preference_bucket_caps_requested_percent(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setattr(CliContext, "agent", fake_agent)
+    runner.invoke(app, ["preference", "init", "degen"])
+    runner.invoke(app, ["preference", "set", "degen", "bucket_max_pct", "10"])
+    runner.invoke(app, ["preference", "set", "degen", "bucket_tolerance_pct", "5"])
+
+    result = runner.invoke(app, ["-o", "json", "deploy", "--percent", "10", "--preference", "degen", "--dry-run"])
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["percentage"] == 1.0
 
 
 def test_candidate_actions_do_not_deploy_idle_into_existing_positions():
@@ -370,6 +446,51 @@ def test_candidate_actions_do_not_deploy_idle_into_existing_positions():
     deploy_candidates = [c for c in candidates if c["type"] == "deploy_idle"]
     assert [c["target_vault_address"] for c in deploy_candidates] == ["0xNEW"]
     assert deploy_candidates[0]["amount_usd"] == 20.0
+
+
+def test_preference_bucket_caps_candidates_that_increase_bucket_exposure():
+    opportunities = [
+        {"vault_address": "0xDEGEN_OLD", "vault_name": "Old Degen", "apy": 0.03},
+        {"vault_address": "0xDEGEN_NEW", "vault_name": "New Degen", "apy": 0.10},
+    ]
+    positions = [
+        {"vault_address": "0xDEGEN_OLD", "vault_name": "Old Degen", "nickname": "old", "balance_usd": 8.0, "apy": 0.02},
+        {"vault_address": "0xSAFE", "vault_name": "Safe", "nickname": "safe", "balance_usd": 42.0, "apy": 0.01},
+    ]
+    idle = {"usdc_balance": 50.0}
+    cfg = {
+        "active_preference": {"name": "degen", "filters": {"bucket_max_pct": 10, "bucket_tolerance_pct": 5}},
+        "agent": {},
+        "risk": {},
+        "strategy": {"min_deposit_usd": 0.1},
+        "decision": {"min_apy_improvement": 0.01},
+    }
+
+    state = preference_bucket_state(cfg, opportunities, positions, idle)
+    candidates = build_candidate_actions(FakeAgent(), cfg, opportunities, positions, idle)
+
+    assert state["current_pct"] == 8.0
+    assert state["remaining_deploy_usd"] == 2.0
+    deploy_candidates = [c for c in candidates if c["type"] == "deploy_idle"]
+    assert deploy_candidates[0]["amount_usd"] == 2.0
+    incoming_rebalances = [c for c in candidates if c.get("source_vault_address") == "0xSAFE"]
+    assert incoming_rebalances
+    assert {c["type"] for c in incoming_rebalances} == {"partial_rebalance"}
+    assert {c["amount_usd"] for c in incoming_rebalances} == {2.0}
+
+
+def test_preference_bucket_reports_tolerance_band_status():
+    cfg = {
+        "active_preference": {"name": "degen", "filters": {"bucket_max_pct": 10, "bucket_tolerance_pct": 5}},
+    }
+    opportunities = [{"vault_address": "0xDEGEN"}]
+
+    state = preference_bucket_state(cfg, opportunities, [{"vault_address": "0xDEGEN", "balance_usd": 12.0}], {"usdc_balance": 88.0})
+    assert state["status"] == "within_tolerance"
+    assert state["remaining_deploy_usd"] == 0.0
+
+    state = preference_bucket_state(cfg, opportunities, [{"vault_address": "0xDEGEN", "balance_usd": 16.0}], {"usdc_balance": 84.0})
+    assert state["status"] == "over_tolerance"
 
 
 def test_plan_decision_rebalance_uses_projected_available_idle():

@@ -160,6 +160,9 @@ Examples:
 vaultsfyi preference init blue-chip
 vaultsfyi preference set blue-chip min_tvl 10000000
 vaultsfyi preference set blue-chip allowed_protocols aave,morpho,euler
+vaultsfyi preference init degen
+vaultsfyi preference set degen bucket_max_pct 10
+vaultsfyi preference set degen bucket_tolerance_pct 5
 ```
 
 Comma-separated values become lists. `true`, `false`, `null`, integers, and floats are parsed into native TOML values.

@@ -268,6 +268,8 @@ curators = []
 allowed_protocols = ["aave", "morpho", "euler"]
 disallowed_protocols = []
 vault_whitelist = []
+# bucket_max_pct = 10 # cap this preference to 10% of portfolio for new capital
+# bucket_tolerance_pct = 5 # report over_tolerance above 15% after drift
 
 [display]
 decimals = 2

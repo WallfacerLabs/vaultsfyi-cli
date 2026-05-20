@@ -64,9 +64,42 @@ PREFERENCE_KEY_ALIASES = {
     "allowed_curators": "curators",
 }
 
+BUCKET_MAX_PCT_KEYS = ("bucket_max_pct", "max_portfolio_pct")
+BUCKET_TOLERANCE_PCT_KEYS = ("bucket_tolerance_pct", "tolerance_pct")
+
 
 def _address_key(address: str | None) -> str:
     return (address or "").lower()
+
+
+def _list_value(value: Any) -> list[Any]:
+    if value is None or value == "":
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, (tuple, set)):
+        return list(value)
+    if isinstance(value, str) and "," in value:
+        return [item.strip() for item in value.split(",") if item.strip()]
+    return [value]
+
+
+def _first_present(data: dict[str, Any], keys: tuple[str, ...]) -> Any:
+    for key in keys:
+        value = data.get(key)
+        if value not in (None, "", []):
+            return value
+    return None
+
+
+def _percent_value(value: Any, key: str) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"preference {key} must be a number") from exc
+    if not math.isfinite(parsed):
+        raise ValueError(f"preference {key} must be finite")
+    return parsed
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -105,6 +138,96 @@ def apply_preference(cfg: dict[str, Any], preference_name: str | None) -> dict[s
     return resolved
 
 
+def preference_bucket_config(cfg: dict[str, Any]) -> dict[str, Any] | None:
+    """Return active preference bucket settings, if the preference defines them."""
+    active = cfg.get("active_preference") or {}
+    preference = active.get("filters") or {}
+    max_value = _first_present(preference, BUCKET_MAX_PCT_KEYS)
+    if max_value is None:
+        return None
+
+    max_pct = _percent_value(max_value, "bucket_max_pct")
+    tolerance_value = _first_present(preference, BUCKET_TOLERANCE_PCT_KEYS)
+    tolerance_pct = (
+        0.0
+        if tolerance_value is None
+        else _percent_value(tolerance_value, "bucket_tolerance_pct")
+    )
+    if max_pct < 0 or max_pct > 100:
+        raise ValueError("preference bucket_max_pct must be between 0 and 100")
+    if tolerance_pct < 0:
+        raise ValueError("preference bucket_tolerance_pct must be greater than or equal to 0")
+    return {
+        "preference": active.get("name"),
+        "max_pct": max_pct,
+        "tolerance_pct": tolerance_pct,
+        "upper_pct": min(100.0, max_pct + tolerance_pct),
+    }
+
+
+def preference_bucket_state(
+    cfg: dict[str, Any],
+    opportunities: list[dict],
+    positions: list[dict],
+    idle_assets: dict,
+) -> dict[str, Any] | None:
+    """Estimate active preference exposure from eligible vault and whitelist addresses."""
+    bucket = preference_bucket_config(cfg)
+    if bucket is None:
+        return None
+
+    active = cfg.get("active_preference") or {}
+    preference = active.get("filters") or {}
+    bucket_addresses = {
+        _address_key(vault.get("vault_address"))
+        for vault in opportunities
+        if vault.get("vault_address")
+    }
+    bucket_addresses.update(
+        _address_key(str(address))
+        for address in _list_value(preference.get("vault_whitelist"))
+        if address
+    )
+
+    bucket_usd = sum(
+        float(position.get("balance_usd", 0))
+        for position in positions
+        if _address_key(position.get("vault_address")) in bucket_addresses
+    )
+    positions_usd = sum(float(position.get("balance_usd", 0)) for position in positions)
+    idle_usd = float(idle_assets.get("usdc_balance", 0))
+    portfolio_usd = idle_usd + positions_usd
+
+    if portfolio_usd > 0:
+        current_pct = (bucket_usd / portfolio_usd) * 100
+        max_usd = portfolio_usd * (bucket["max_pct"] / 100)
+        upper_usd = portfolio_usd * (bucket["upper_pct"] / 100)
+    else:
+        current_pct = 0.0
+        max_usd = 0.0
+        upper_usd = 0.0
+
+    if current_pct > bucket["upper_pct"]:
+        status = "over_tolerance"
+    elif current_pct >= bucket["max_pct"]:
+        status = "within_tolerance"
+    else:
+        status = "under_limit"
+
+    return {
+        **bucket,
+        "current_usd": bucket_usd,
+        "current_pct": current_pct,
+        "portfolio_usd": portfolio_usd,
+        "max_usd": max_usd,
+        "upper_usd": upper_usd,
+        "remaining_deploy_usd": max(0.0, max_usd - bucket_usd),
+        "remaining_tolerance_usd": max(0.0, upper_usd - bucket_usd),
+        "status": status,
+        "matched_vault_addresses": sorted(bucket_addresses),
+    }
+
+
 def _finite_days(tx_cost_usd: float, annual_gain_usd: float) -> float | None:
     if annual_gain_usd <= 0:
         return None
@@ -128,6 +251,15 @@ def _cost(action_type: str, cfg: dict[str, Any], gas_price_wei: int | None = Non
         "tx_cost_usd": tx_cost_usd,
         "eth_usd_price": float(dc["eth_usd_price"]),
     }
+
+
+def _candidate_increases_bucket_exposure(candidate: dict[str, Any], bucket: dict[str, Any]) -> bool:
+    bucket_addresses = {_address_key(address) for address in bucket.get("matched_vault_addresses", [])}
+    target = _address_key(candidate.get("target_vault_address"))
+    if not target or target not in bucket_addresses:
+        return False
+    source = _address_key(candidate.get("source_vault_address"))
+    return not source or source not in bucket_addresses
 
 
 def build_candidate_actions(agent, cfg: dict[str, Any], opportunities: list[dict], positions: list[dict], idle_assets: dict) -> list[dict]:
@@ -155,6 +287,10 @@ def build_candidate_actions(agent, cfg: dict[str, Any], opportunities: list[dict
         position_cap_usd = portfolio_value * (float(max_position_pct) / 100)
         caps.append(position_cap_usd)
     deploy_amount = idle_usd if not caps else min(idle_usd, min(caps))
+    bucket_state = preference_bucket_state(cfg, opportunities, positions, idle_assets)
+    bucket_addresses = set(bucket_state["matched_vault_addresses"]) if bucket_state else set()
+    if bucket_state:
+        deploy_amount = min(deploy_amount, float(bucket_state["remaining_deploy_usd"]))
     existing_vault_addresses = {_address_key(position.get("vault_address")) for position in positions}
 
     for vault in opportunities[:10]:
@@ -183,6 +319,7 @@ def build_candidate_actions(agent, cfg: dict[str, Any], opportunities: list[dict
 
     for position in positions:
         source_address = position["vault_address"]
+        source_in_bucket = _address_key(source_address) in bucket_addresses if bucket_state else False
         source_apy = float(position.get("apy", 0))
         source_balance = float(position.get("balance_usd", 0))
         if source_balance <= 0:
@@ -205,6 +342,25 @@ def build_candidate_actions(agent, cfg: dict[str, Any], opportunities: list[dict
                 partial_amount = min(partial_amount, position_cap_usd)
             if allow_partial and partial_amount < full_amount:
                 amounts.append(("partial_rebalance", partial_amount))
+            if bucket_state and not source_in_bucket:
+                capacity = float(bucket_state["remaining_deploy_usd"])
+                if capacity <= 0:
+                    amounts = []
+                else:
+                    adjusted_amounts = []
+                    seen_amounts = set()
+                    for action_type, amount in amounts:
+                        if amount <= capacity:
+                            adjusted = (action_type, amount)
+                        elif allow_partial:
+                            adjusted = ("partial_rebalance", capacity)
+                        else:
+                            continue
+                        key = (adjusted[0], round(float(adjusted[1]), 12))
+                        if key not in seen_amounts:
+                            adjusted_amounts.append(adjusted)
+                            seen_amounts.add(key)
+                    amounts = adjusted_amounts
 
             for action_type, amount in amounts:
                 if amount < min_deposit:
@@ -239,6 +395,7 @@ def build_decision_packet(agent, cfg: dict[str, Any], preference_name: str | Non
     positions = agent.get_positions()
     opportunities = agent.get_opportunities()
     candidates = build_candidate_actions(agent, resolved_cfg, opportunities, positions, idle)
+    bucket_state = preference_bucket_state(resolved_cfg, opportunities, positions, idle)
     return {
         "schema_version": PACKET_SCHEMA,
         "wallet": agent.wallet.address,
@@ -253,6 +410,7 @@ def build_decision_packet(agent, cfg: dict[str, Any], preference_name: str | Non
             "must_choose_candidate_id": True,
             "preference_is_hard_boundary": True,
             "no_arbitrary_tx_data": True,
+            "preference_bucket": bucket_state,
             "decision": decision_config(resolved_cfg),
             "agent_caps": {
                 "max_deploy_usd": resolved_cfg.get("agent", {}).get("max_deploy_usd"),
@@ -311,6 +469,15 @@ def validate_decision(decision: dict[str, Any], packet: dict[str, Any]) -> dict[
             violations.append("candidate amount is invalid")
         elif candidate_type != "hold" and amount <= 0:
             violations.append("candidate amount must be positive")
+        bucket = packet.get("constraints", {}).get("preference_bucket")
+        if bucket and candidate_type != "hold" and _candidate_increases_bucket_exposure(candidate, bucket):
+            try:
+                remaining_bucket_usd = float(bucket.get("remaining_deploy_usd", 0))
+            except (TypeError, ValueError):
+                violations.append("preference bucket remaining deploy capacity is invalid")
+                remaining_bucket_usd = math.nan
+            if math.isfinite(remaining_bucket_usd) and amount > remaining_bucket_usd + 1e-9:
+                violations.append("candidate exceeds preference bucket remaining deploy capacity")
 
         dc = packet.get("constraints", {}).get("decision", {})
         breakeven = candidate.get("breakeven_days")

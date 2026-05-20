@@ -246,10 +246,15 @@ def new_preference() -> dict[str, Any]:
         "vault_whitelist": [],
         "blocked_protocols": [],
         "allowed_curators": [],
+        "bucket_max_pct": None,
+        "bucket_tolerance_pct": None,
     }
 
 
 def list_preferences(cfg: dict[str, Any]) -> list[dict[str, Any]]:
+    def preference_value(pref: dict[str, Any], key: str, alias: str) -> Any:
+        return pref.get(key) if pref.get(key) is not None else pref.get(alias)
+
     return [
         {
             "name": name,
@@ -266,6 +271,8 @@ def list_preferences(cfg: dict[str, Any]) -> list[dict[str, Any]]:
             "disallowed_protocols": pref.get("disallowed_protocols") or pref.get("blocked_protocols"),
             "tags": pref.get("tags"),
             "curators": pref.get("curators") or pref.get("allowed_curators"),
+            "bucket_max_pct": preference_value(pref, "bucket_max_pct", "max_portfolio_pct"),
+            "bucket_tolerance_pct": preference_value(pref, "bucket_tolerance_pct", "tolerance_pct"),
         }
         for name, pref in sorted(cfg.get("preferences", {}).items())
     ]

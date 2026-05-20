@@ -90,10 +90,14 @@ def extract_json_values(text: str) -> list[Any]:
 
 def assert_paginated(payload: Any) -> None:
     assert isinstance(payload, dict)
+    assert isinstance(payload.get("itemsOnPage"), int)
     assert isinstance(payload.get("data"), list)
-    items_on_page = payload.get("itemsOnPage")
-    if items_on_page is not None:
-        assert isinstance(items_on_page, int)
+
+
+def assert_portfolio_data_list(payload: Any) -> None:
+    assert isinstance(payload, dict)
+    assert isinstance(payload.get("data"), list)
+    assert isinstance(payload.get("errors"), dict)
 
 
 def assert_list(payload: Any) -> None:
@@ -197,9 +201,9 @@ def test_live_full_no_funds_api_command_surface(live_env):
         (["api", "historical", "share-price", network, vault_id, "--per-page", "2"], assert_paginated),
         (["api", "historical", "asset-prices", network, asset_address, "--per-page", "2"], assert_paginated),
         (["api", "portfolio", "best-vault", user_address, "--allowed-network", network, "--allowed-asset", "USDC"], assert_dict),
-        (["api", "portfolio", "positions", user_address, "--allowed-network", network, "--allowed-asset", "USDC"], assert_paginated),
+        (["api", "portfolio", "positions", user_address, "--allowed-network", network, "--allowed-asset", "USDC"], assert_portfolio_data_list),
         (["api", "portfolio", "best-deposit-options", user_address, "--allowed-network", network, "--allowed-asset", "USDC"], assert_dict),
-        (["api", "portfolio", "idle-assets", user_address, "--allowed-network", network, "--allowed-asset", "USDC"], assert_paginated),
+        (["api", "portfolio", "idle-assets", user_address, "--allowed-network", network, "--allowed-asset", "USDC"], assert_portfolio_data_list),
         (["api", "transactions", "context", user_address, network, vault_id], assert_dict),
         (["api", "transactions", "suffix", user_address, vault_id], assert_dict),
         (["api", "transactions", "payload", "deposit", user_address, network, vault_id, "--asset-address", asset_address, "--amount", "1"], assert_dict),

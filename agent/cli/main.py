@@ -23,6 +23,8 @@ from agent.decision import (
     build_decision_packet,
     execute_decision,
     plan_decision,
+    preference_bucket_config,
+    preference_bucket_state,
     read_json,
     validate_decision,
 )
@@ -88,15 +90,24 @@ def _effective_deploy_percent(ctx: CliContext, agent, requested_percent: float) 
     ]
     caps = [float(cap) for cap in caps if cap is not None]
     max_position_pct = ctx.cfg.get("agent", {}).get("max_position_pct")
-    if not caps and max_position_pct is None:
+    bucket_cfg = preference_bucket_config(ctx.cfg)
+    if not caps and max_position_pct is None and bucket_cfg is None:
         return requested_percent
 
-    idle = agent.get_idle_assets()["usdc_balance"]
+    idle_info = agent.get_idle_assets()
+    idle = idle_info["usdc_balance"]
+    positions = None
     if max_position_pct is not None:
-        positions_value = sum(float(position.get("balance_usd", 0)) for position in agent.get_positions())
+        positions = agent.get_positions()
+        positions_value = sum(float(position.get("balance_usd", 0)) for position in positions)
         portfolio_value = idle + positions_value
         if portfolio_value > 0:
             caps.append(portfolio_value * (float(max_position_pct) / 100))
+    if bucket_cfg is not None:
+        positions = positions if positions is not None else agent.get_positions()
+        bucket_state = preference_bucket_state(ctx.cfg, agent.get_opportunities(), positions, idle_info)
+        if bucket_state is not None:
+            caps.append(float(bucket_state["remaining_deploy_usd"]))
     if not caps:
         return requested_percent
     if idle <= 0:
@@ -211,6 +222,9 @@ def deploy(
         ctx = ctx.with_preference(preference)
         agent = ctx.agent()
         deploy_percent = _effective_deploy_percent(ctx, agent, percent)
+        if percent > 0 and deploy_percent <= 0 and preference_bucket_config(ctx.cfg):
+            bucket_name = ctx.cfg.get("active_preference", {}).get("name") or preference
+            raise ValueError(f"preference bucket '{bucket_name}' has no remaining deploy capacity")
         plan = agent.prepare_deploy(deploy_percent)
         if dry_run:
             result = {**plan, "status": "dry_run"}

@@ -116,10 +116,16 @@ Validator checks:
 - target vault is eligible
 - source position exists
 - amount is valid
+- preference bucket capacity is respected
 - breakeven is within configured policy
 - expected net gain clears configured policy
 
 Invalid decisions cannot be planned or executed.
+
+When the selected preference defines `bucket_max_pct`, the packet also includes
+`constraints.preference_bucket` with current exposure, remaining deploy room,
+and tolerance-band status. Candidate generation caps `deploy_idle` and incoming
+rebalance amounts so they cannot add exposure above `bucket_max_pct`.
 
 ## Plan
 
