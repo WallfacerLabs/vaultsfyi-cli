@@ -201,6 +201,7 @@ api_url = "https://api.vaults.fyi"
 [agent]
 name = "default"
 mode = "dry-run" # dry-run | paper | live
+# preference = "blue-chip" # default preference for `vaultsfyi agent run`
 # max_deploy_usd = 100
 # max_position_pct = 25 # cap deploy/rebalance target size as a percent of portfolio value
 
@@ -284,11 +285,11 @@ Config resolution, from lowest to highest priority:
 2. global config: ~/.config/vaultsfyi/config.toml
 3. selected agent profile: ~/.config/vaultsfyi/agents/<agent>.toml
 4. supported environment variables
-5. selected preference copied into strategy for that command
+5. selected preference copied into strategy for that command or `agent run`
 6. explicit command flags
 ```
 
-Later layers override earlier layers for the same key. Preferences are per-command overlays selected with `--preference`; they do not rewrite the config file.
+Later layers override earlier layers for the same key. Preferences are overlays selected with `--preference` or with `agent.preference` for `agent run`; they do not rewrite the config file.
 
 Supported environment overrides:
 
@@ -381,8 +382,10 @@ vaultsfyi --agent conservative opportunities
 Tune a profile without changing the global config:
 
 ```bash
-vaultsfyi --agent conservative config set strategy.min_apy 0.03
-vaultsfyi --agent conservative config set strategy.max_apy 0.25
+vaultsfyi --agent conservative preference init blue-chip
+vaultsfyi --agent conservative preference set blue-chip min_apy 0.03
+vaultsfyi --agent conservative preference set blue-chip max_apy 0.25
+vaultsfyi --agent conservative config set agent.preference blue-chip
 vaultsfyi --agent conservative config set agent.max_deploy_usd 100
 ```
 
@@ -402,7 +405,9 @@ vaultsfyi agent run conservative --execute --yes
 
 This is the intended autonomous-management command. Allow it without per-run
 approval only for named profiles that have been reviewed for unattended live
-operation. Direct one-off commands such as `deploy --yes`, `redeem --yes`,
+operation. `agent run` applies the profile's `agent.preference` by default,
+including preference bucket limits and tolerance reporting. Direct one-off
+commands such as `deploy --yes`, `redeem --yes`,
 `redeem-all --yes`, and `execute-decision --yes` should remain
 approval-required for OpenClaw.
 

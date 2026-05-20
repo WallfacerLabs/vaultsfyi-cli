@@ -65,8 +65,8 @@ Unattended operation should use a named live agent profile instead:
 vaultsfyi agent run NAME --execute --yes
 ```
 
-Only allow that autonomous command after the named profile's wallet, filters,
-deploy size, and risk caps have been reviewed.
+Only allow that autonomous command after the named profile's wallet, selected
+preference, bucket limits, deploy size, and risk caps have been reviewed.
 
 ## Wallet locks
 

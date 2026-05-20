@@ -95,17 +95,24 @@ All agents should use the CLI as the boundary. They should not build raw txs, ho
 ## Autonomous management
 
 Use a named agent profile for unattended operation. This is the intended
-autonomous path because the policy is bounded by config: wallet, mode,
-preferences, deploy percentage, vault filters, and risk caps.
+autonomous path because the policy is bounded by profile config: wallet, mode,
+selected preference, deploy percentage, bucket limits, and risk caps.
 
 ```bash
 vaultsfyi agent init conservative --wallet ows-conservative --mode dry-run
+vaultsfyi --agent conservative preference init blue-chip
+vaultsfyi --agent conservative preference set blue-chip allowed_assets USDC
+vaultsfyi --agent conservative preference set blue-chip allowed_networks base
+vaultsfyi --agent conservative preference set blue-chip allowed_protocols aave,morpho,euler
+vaultsfyi --agent conservative preference set blue-chip min_tvl 10000000
+vaultsfyi --agent conservative preference set blue-chip max_apy 0.15
+vaultsfyi --agent conservative preference set blue-chip bucket_max_pct 25
+vaultsfyi --agent conservative preference set blue-chip bucket_tolerance_pct 5
+vaultsfyi --agent conservative config set agent.preference blue-chip
 vaultsfyi --agent conservative config set agent.mode live
 vaultsfyi --agent conservative config set agent.max_deploy_usd 100
-vaultsfyi --agent conservative config set agent.max_position_pct 25
+vaultsfyi --agent conservative config set risk.max_single_vault_usd 100
 vaultsfyi --agent conservative config set execution.deploy_percent 10
-vaultsfyi --agent conservative config set strategy.min_tvl 10000000
-vaultsfyi --agent conservative config set strategy.max_apy 0.15
 vaultsfyi agent run conservative --dry-run
 ```
 

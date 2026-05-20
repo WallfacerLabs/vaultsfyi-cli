@@ -41,9 +41,12 @@ vaultsfyi --agent conservative deploy --percent 10
 ## Tune a profile
 
 ```bash
-vaultsfyi --agent conservative config set strategy.min_apy 0.03
-vaultsfyi --agent conservative config set strategy.max_apy 0.15
-vaultsfyi --agent conservative config set strategy.min_tvl 10000000
+vaultsfyi --agent conservative preference init blue-chip
+vaultsfyi --agent conservative preference set blue-chip min_apy 0.03
+vaultsfyi --agent conservative preference set blue-chip max_apy 0.15
+vaultsfyi --agent conservative preference set blue-chip min_tvl 10000000
+vaultsfyi --agent conservative preference set blue-chip bucket_max_pct 25
+vaultsfyi --agent conservative config set agent.preference blue-chip
 vaultsfyi --agent conservative config set agent.max_deploy_usd 100
 ```
 
@@ -62,6 +65,9 @@ vaultsfyi agent run conservative --dry-run
 ```
 
 `agent run` performs one strategy pass and emits a dry-run plan when possible.
+When `agent.preference` is set, the run applies that preference's vault filters,
+bucket max, and tolerance band. Use `agent run NAME --preference OTHER` to
+override the profile default for one run.
 
 Live execution is explicit:
 

@@ -152,6 +152,9 @@ named profile:
 vaultsfyi agent run NAME --execute --yes
 ```
 
+The profile should set `agent.preference` when autonomous runs must use the same
+preference filters and bucket limits as packet/deploy flows.
+
 ## Decision config
 
 ```toml

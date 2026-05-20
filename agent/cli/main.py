@@ -399,10 +399,21 @@ def _agent_run_payload(ctx: CliContext, deploy_percent: float | None = None) -> 
     state = agent.get_state()
     opportunities = agent.get_opportunities()
     top = opportunities[0] if opportunities else None
+    active_preference = ctx.cfg.get("active_preference") or {}
+    bucket_state = None
+    if preference_bucket_config(ctx.cfg):
+        bucket_state = preference_bucket_state(
+            ctx.cfg,
+            opportunities,
+            agent.get_positions(),
+            state["idle_assets"],
+        )
     payload = {
         "agent": ctx.effective_agent_name,
         "wallet": ctx.cfg["wallet"]["name"],
         "mode": ctx.cfg["agent"].get("mode", "dry-run"),
+        "preference": active_preference.get("name"),
+        "preference_bucket": bucket_state,
         "state": state,
         "top_opportunity": top,
         "opportunities_count": len(opportunities),
@@ -424,12 +435,20 @@ def agent_run(
     dry_run: bool = typer.Option(False, "--dry-run", help="Never broadcast; build a dry-run plan when possible"),
     execute: bool = typer.Option(False, "--execute", help="Allow live deploy if profile mode is live"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Required with --execute to broadcast"),
+    preference: Optional[str] = typer.Option(
+        None,
+        "--preference",
+        "-p",
+        help="Preference to apply, overriding agent.preference",
+    ),
 ):
     """Run one named agent strategy pass."""
     def inner(ctx: CliContext):
         if not once:
             raise ValueError("loop mode is not implemented yet; use an external scheduler for now")
         run_ctx = build_context(ctx.output, ctx.config_path, name)
+        preference_name = preference or run_ctx.cfg.get("agent", {}).get("preference")
+        run_ctx = run_ctx.with_preference(preference_name)
         mode = run_ctx.cfg["agent"].get("mode", "dry-run")
         deploy_percent = float(run_ctx.cfg.get("execution", {}).get("deploy_percent", 10.0))
         should_plan = dry_run or mode in {"dry-run", "paper"} or execute
@@ -451,6 +470,8 @@ def agent_run(
                 "agent": payload["agent"],
                 "wallet": payload["wallet"],
                 "mode": payload["mode"],
+                "preference": payload["preference"] or "—",
+                "bucket": (payload.get("preference_bucket") or {}).get("status", "—"),
                 "idle": format_usd(payload["state"]["idle_assets"]["usdc_balance"]),
                 "positions": payload["state"]["positions_count"],
                 "top_vault": payload["top_opportunity"]["vault_name"] if payload["top_opportunity"] else "—",
@@ -469,6 +490,7 @@ def agent_compare(names: list[str] = typer.Argument(..., help="Agent profile nam
         payload = []
         for name in names:
             run_ctx = build_context(ctx.output, ctx.config_path, name)
+            run_ctx = run_ctx.with_preference(run_ctx.cfg.get("agent", {}).get("preference"))
             data = _agent_run_payload(run_ctx, None)
             payload.append(data)
             top = data["top_opportunity"]
@@ -476,6 +498,8 @@ def agent_compare(names: list[str] = typer.Argument(..., help="Agent profile nam
                 "agent": name,
                 "wallet": data["wallet"],
                 "mode": data["mode"],
+                "preference": data["preference"] or "—",
+                "bucket": (data.get("preference_bucket") or {}).get("status", "—"),
                 "idle": format_usd(data["state"]["idle_assets"]["usdc_balance"]),
                 "positions": data["state"]["positions_count"],
                 "top_vault": top["vault_name"] if top else "—",

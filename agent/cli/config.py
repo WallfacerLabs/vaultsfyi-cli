@@ -40,6 +40,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "agent": {
         "name": "default",
         "mode": "dry-run",  # dry-run | paper | live
+        "preference": None,
         "max_deploy_usd": None,
         "max_position_pct": None,
     },
@@ -235,6 +236,7 @@ def list_agent_profiles() -> list[dict[str, Any]]:
             "name": path.stem,
             "wallet": cfg.get("wallet", {}).get("name", ""),
             "mode": cfg.get("agent", {}).get("mode", ""),
+            "preference": cfg.get("agent", {}).get("preference"),
             "path": str(path),
         })
     return rows
@@ -285,6 +287,7 @@ def new_agent_profile(agent_name: str, wallet_name: str | None = None, mode: str
         "agent": {
             "name": agent_name,
             "mode": mode,
+            "preference": None,
             "max_deploy_usd": None,
             "max_position_pct": None,
         },

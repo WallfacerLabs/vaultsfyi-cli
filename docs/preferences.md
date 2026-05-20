@@ -32,6 +32,8 @@ vaultsfyi preference set degen bucket_tolerance_pct 5
 vaultsfyi opportunities --preference blue-chip
 vaultsfyi deploy --percent 10 --preference blue-chip
 vaultsfyi decision-packet --preference blue-chip -o json
+vaultsfyi --agent conservative config set agent.preference blue-chip
+vaultsfyi agent run conservative --dry-run
 ```
 
 ## Fields
@@ -98,11 +100,14 @@ Most filter names are snake_case versions of the vaults.fyi `/v2/detailed-vaults
 
 ## Bucket Limits
 
-Preference buckets are enforced for commands that select a preference:
+Preference buckets are enforced for commands that select a preference, including
+`agent run` when the profile sets `agent.preference`:
 
 ```bash
 vaultsfyi deploy --percent 10 --preference degen
 vaultsfyi decision-packet --preference degen -o json
+vaultsfyi --agent opportunistic config set agent.preference degen
+vaultsfyi agent run opportunistic --dry-run
 ```
 
 The CLI estimates bucket exposure by matching current position vault addresses
@@ -111,7 +116,7 @@ addresses. If a degen bucket has `bucket_max_pct = 10`, a 100 USDC portfolio
 with 8 USDC already in degen vaults can only add 2 USDC more, even if the
 requested deploy size is larger.
 
-The tolerance band is informational for the decision packet:
+The tolerance band is informational for decision packets and agent-run status:
 
 - below `bucket_max_pct`: `under_limit`
 - at or above `bucket_max_pct`, up to `bucket_max_pct + bucket_tolerance_pct`: `within_tolerance`
@@ -138,8 +143,8 @@ Resolution order, from lowest to highest priority:
 2. global config: `~/.config/vaultsfyi/config.toml`, or `$XDG_CONFIG_HOME/vaultsfyi/config.toml` when `XDG_CONFIG_HOME` is set.
 3. agent profile overlay: `~/.config/vaultsfyi/agents/conservative.toml` when `--agent conservative` is used. This can override any normal config section, such as `wallet`, `strategy`, `risk`, `execution`, or `decision`.
 4. environment overrides: only the mapped runtime fields below, such as wallet, RPC, and vaults.fyi API settings.
-5. selected preference overlay: `[preferences.blue-chip]` is copied into `strategy` for this command only because `--preference blue-chip` was passed.
-6. explicit command flags: command-specific flags such as `--percent 10`, `--dry-run`, `--yes`, or `--execute`.
+5. selected preference overlay: `[preferences.blue-chip]` is copied into `strategy` because `--preference blue-chip` was passed, or because `agent.preference = "blue-chip"` is configured for `agent run`.
+6. explicit command flags: command-specific flags such as `--percent 10`, `--preference NAME`, `--dry-run`, `--yes`, or `--execute`.
 
 Environment overrides are:
 
@@ -173,6 +178,6 @@ allowed_protocols = ["morpho"]
 
 The effective command uses `min_tvl = 10000000`, `allowed_networks = ["base"]`,
 and `allowed_protocols = ["morpho"]`. The preference does not rewrite the config
-file; it only overlays the in-memory config for that command.
+file; it only overlays the in-memory config for that command or agent run.
 
 Preferences are hard boundaries for OpenClaw decisions. A decision targeting a vault outside the selected preference fails validation.

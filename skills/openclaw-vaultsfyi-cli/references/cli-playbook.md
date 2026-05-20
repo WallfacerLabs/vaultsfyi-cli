@@ -58,6 +58,9 @@ vaultsfyi --agent stable-core preference set blue-chip min_vault_score 8
 vaultsfyi --agent stable-core preference set blue-chip only_transactional true
 vaultsfyi --agent stable-core preference set blue-chip allow_corrupted false
 vaultsfyi --agent stable-core preference set blue-chip allow_vaults_with_warnings false
+vaultsfyi --agent stable-core preference set blue-chip bucket_max_pct 35
+vaultsfyi --agent stable-core preference set blue-chip bucket_tolerance_pct 5
+vaultsfyi --agent stable-core config set agent.preference blue-chip
 vaultsfyi --agent stable-core preference show blue-chip
 ```
 
@@ -65,13 +68,12 @@ Preference list values may be comma-separated, e.g. `aave,morpho,euler`.
 
 ## Allocation Buckets
 
-Model a bucket as a profile plus a preference plus caps. Use one profile per independent sleeve when buckets need separate wallets, schedules, caps, or risk rules.
+Model a bucket as a profile plus its selected `agent.preference` plus caps. Use one profile per independent sleeve when buckets need separate wallets, schedules, caps, or risk rules.
 
 Example stable bucket:
 
 ```bash
 vaultsfyi --agent stable-core config set agent.max_deploy_usd 500
-vaultsfyi --agent stable-core config set agent.max_position_pct 35
 vaultsfyi --agent stable-core config set risk.max_single_vault_usd 250
 vaultsfyi --agent stable-core config set execution.deploy_percent 10
 vaultsfyi --agent stable-core config set decision.min_net_gain_usd 2
@@ -94,6 +96,9 @@ vaultsfyi --agent opportunistic preference set opportunistic allowed_networks ba
 vaultsfyi --agent opportunistic preference set opportunistic min_tvl 1000000
 vaultsfyi --agent opportunistic preference set opportunistic max_apy 0.30
 vaultsfyi --agent opportunistic preference set opportunistic allow_vaults_with_warnings false
+vaultsfyi --agent opportunistic preference set opportunistic bucket_max_pct 10
+vaultsfyi --agent opportunistic preference set opportunistic bucket_tolerance_pct 5
+vaultsfyi --agent opportunistic config set agent.preference opportunistic
 ```
 
 Use `vaultsfyi -o json agent compare stable-core opportunistic` to compare buckets.
@@ -229,8 +234,8 @@ Report even when there is no action.
 Dry-run allocator prompt:
 
 ```text
-In /path/to/vaults-cli, run vaultsfyi agent run stable-core --dry-run and compare
-the result with the active blue-chip preference. Do not broadcast. Report the
+In /path/to/vaults-cli, run vaultsfyi agent run stable-core --dry-run using the
+profile's configured agent.preference. Do not broadcast. Report the
 current allocation, proposed plan, blocked actions, errors, and next scheduled run.
 ```
 

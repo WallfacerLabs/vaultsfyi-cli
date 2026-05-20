@@ -242,6 +242,42 @@ def test_agent_run_dry_run_json(monkeypatch, tmp_path):
     assert data["plan"]["status"] == "dry_run"
 
 
+def test_agent_run_uses_configured_preference_bucket(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setattr(CliContext, "agent", fake_agent)
+    runner.invoke(app, ["agent", "init", "conservative", "--wallet", "ows-conservative"])
+    runner.invoke(app, ["--agent", "conservative", "preference", "init", "degen"])
+    runner.invoke(app, ["--agent", "conservative", "preference", "set", "degen", "bucket_max_pct", "10"])
+    runner.invoke(app, ["--agent", "conservative", "preference", "set", "degen", "bucket_tolerance_pct", "5"])
+    runner.invoke(app, ["--agent", "conservative", "config", "set", "agent.preference", "degen"])
+
+    result = runner.invoke(app, ["-o", "json", "agent", "run", "conservative", "--dry-run"])
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["preference"] == "degen"
+    assert data["preference_bucket"]["max_pct"] == 10.0
+    assert data["preference_bucket"]["status"] == "under_limit"
+    assert data["plan"]["percentage"] == 1.0
+
+
+def test_agent_run_preference_option_overrides_profile_default(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setattr(CliContext, "agent", fake_agent)
+    runner.invoke(app, ["agent", "init", "conservative", "--wallet", "ows-conservative"])
+    runner.invoke(app, ["--agent", "conservative", "preference", "init", "loose"])
+    runner.invoke(app, ["--agent", "conservative", "preference", "init", "degen"])
+    runner.invoke(app, ["--agent", "conservative", "preference", "set", "degen", "bucket_max_pct", "10"])
+    runner.invoke(app, ["--agent", "conservative", "config", "set", "agent.preference", "loose"])
+
+    result = runner.invoke(app, ["-o", "json", "agent", "run", "conservative", "--preference", "degen", "--dry-run"])
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["preference"] == "degen"
+    assert data["preference_bucket"]["max_pct"] == 10.0
+
+
 def test_preference_init_set_and_list(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     result = runner.invoke(app, ["-o", "json", "preference", "init", "blue-chip"])

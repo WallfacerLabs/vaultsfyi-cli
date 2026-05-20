@@ -136,14 +136,15 @@ vaultsfyi --agent conservative config set strategy.max_apy 0.15
 vaultsfyi agent init NAME --wallet WALLET --mode dry-run
 vaultsfyi agent list
 vaultsfyi agent show NAME
-vaultsfyi agent run NAME --dry-run
-vaultsfyi agent run NAME --execute --yes
+vaultsfyi agent run NAME [--preference PREF] --dry-run
+vaultsfyi agent run NAME [--preference PREF] --execute --yes
 vaultsfyi agent compare NAME NAME2
 ```
 
 `agent run NAME --execute --yes` is the intended unattended execution command.
 Use it only for a named profile that has been deliberately configured for live
-operation with reviewed wallet, vault filters, deploy size, and risk caps.
+operation with reviewed wallet, selected preference, deploy size, bucket limits,
+and risk caps.
 
 ## Preference commands
 

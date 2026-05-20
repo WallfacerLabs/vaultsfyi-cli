@@ -21,7 +21,7 @@ Use `vaultsfyi` as the hard boundary between OpenClaw reasoning and wallet execu
 1. **Collect boundaries**: wallet/profile name, allowed assets/networks/protocols, min TVL/APY/score, warning/corruption policy, bucket sizes, schedule, reporting channel, and whether execution is dry-run or approved live.
 2. **Create wallet/profile**: use an OWS wallet through `vaultsfyi wallet create`; start agent profiles in `dry-run`.
 3. **Define preferences**: create reusable `vaultsfyi preference` filters for each allowed risk sleeve.
-4. **Model allocation buckets**: represent each bucket as a named agent profile plus a preference and caps. Use `agent.max_deploy_usd`, `agent.max_position_pct`, `risk.max_single_vault_usd`, `execution.deploy_percent`, and `[decision]` thresholds. Do not invent unsupported bucket config keys.
+4. **Model allocation buckets**: represent each bucket as a named agent profile plus a selected `agent.preference` and caps. Put bucket max/tolerance on the preference; use `agent.max_deploy_usd`, `agent.max_position_pct`, `risk.max_single_vault_usd`, `execution.deploy_percent`, and `[decision]` thresholds for remaining limits. Do not invent unsupported bucket config keys.
 5. **Discover and compare**: use `vaultsfyi api` for broad market discovery and `vaultsfyi opportunities`, `decision-packet`, `validate-decision`, and `plan-decision` for bounded decisions.
 6. **Schedule/report**: for cron or automation, default to read-only scouting and dry-runs. Send the user a summary every run, including no-op runs and failures.
 
@@ -57,6 +57,6 @@ Before live operation, verify:
 - Wallet address was shown to the user and funded intentionally.
 - `vaultsfyi status`, `idle`, and `positions` work for the profile.
 - `vaultsfyi preference show PREF` matches the user's stated boundaries.
-- `vaultsfyi --agent NAME config show --all` shows reviewed caps.
+- `vaultsfyi --agent NAME config show --all` shows `agent.preference = "PREF"` and reviewed caps.
 - `vaultsfyi agent run NAME --dry-run` succeeds.
 - The user approved either a single live command or the exact profile/schedule allowed to run unattended.
