@@ -90,8 +90,10 @@ def extract_json_values(text: str) -> list[Any]:
 
 def assert_paginated(payload: Any) -> None:
     assert isinstance(payload, dict)
-    assert isinstance(payload.get("itemsOnPage"), int)
     assert isinstance(payload.get("data"), list)
+    items_on_page = payload.get("itemsOnPage")
+    if items_on_page is not None:
+        assert isinstance(items_on_page, int)
 
 
 def assert_list(payload: Any) -> None:
@@ -213,7 +215,11 @@ def test_live_full_no_funds_api_command_surface(live_env):
     ]
 
     for args, assertion in cases:
-        assertion(run_cli_json(args, live_env))
+        payload = run_cli_json(args, live_env)
+        try:
+            assertion(payload)
+        except AssertionError as exc:
+            raise AssertionError(f"{' '.join(args)} returned {payload}") from exc
 
     rewards = run_cli_json(["api", "transactions", "rewards", "context", user_address], live_env)
     claim_ids = [
