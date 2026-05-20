@@ -61,6 +61,10 @@ vaultsfyi agent run NAME --execute --yes
 vaultsfyi agent compare NAME NAME2
 ```
 
+`agent run NAME --execute --yes` is the intended unattended execution command.
+Use it only for a named profile that has been deliberately configured for live
+operation with reviewed wallet, vault filters, deploy size, and risk caps.
+
 ## Preference commands
 
 ```bash
@@ -90,3 +94,8 @@ vaultsfyi execute-decision decision.json --packet packet.json --yes
 ```
 
 `decision-packet`, `validate-decision`, and `plan-decision` are read-only with respect to the chain. `execute-decision` signs and broadcasts.
+
+When OpenClaw or another external runner is operating the CLI, direct broadcast
+commands such as `execute-decision --yes`, `deploy --yes`, and `redeem --yes`
+should still require host-level human approval. `--yes` only bypasses the CLI's
+interactive prompt.

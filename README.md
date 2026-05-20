@@ -260,11 +260,18 @@ position_retry_attempts = 3
 position_retry_delay = 5
 ```
 
-Precedence:
+Config resolution, from lowest to highest priority:
 
 ```text
-CLI flags > environment variables > selected agent profile > user config > defaults
+1. built-in defaults
+2. global config: ~/.config/vaultsfyi/config.toml
+3. selected agent profile: ~/.config/vaultsfyi/agents/<agent>.toml
+4. supported environment variables
+5. selected preference copied into strategy for that command
+6. explicit command flags
 ```
+
+Later layers override earlier layers for the same key. Preferences are per-command overlays selected with `--preference`; they do not rewrite the config file.
 
 Supported environment overrides:
 
@@ -329,6 +336,7 @@ and the process exits non-zero.
 
 - `deploy`, `redeem`, and `redeem-all` ask for confirmation by default
 - JSON mode still requires `--yes` to broadcast
+- In OpenClaw contexts, direct broadcast commands with `--yes` should still require host-level approval
 - `--dry-run` never broadcasts
 - Gas is checked before transaction generation/execution
 - Failed deposit flows do not revoke approvals automatically
@@ -374,6 +382,11 @@ Live execution is intentionally explicit:
 vaultsfyi --agent conservative config set agent.mode live
 vaultsfyi agent run conservative --execute --yes
 ```
+
+This is the intended autonomous-management command. Allow it without per-run
+approval only for named profiles that have been reviewed for unattended live
+operation. Direct one-off commands such as `deploy --yes`, `redeem --yes`, and
+`execute-decision --yes` should remain approval-required for OpenClaw.
 
 Live transaction commands take a wallet lock under `~/.local/state/vaultsfyi/locks/` so two processes cannot broadcast from the same OWS wallet at the same time.
 

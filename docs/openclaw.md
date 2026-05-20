@@ -70,11 +70,18 @@ Reason: clears blue-chip preference and churn hurdle.
 
 ## Execute
 
-Only after explicit permission unless an external policy grants live execution:
+Only after explicit permission. In an OpenClaw runner, these direct broadcast
+commands should be marked as approval-required even when they include `--yes`:
 
 ```bash
 vaultsfyi --agent conservative execute-decision decision.json --packet packet.json --yes
+vaultsfyi --agent conservative deploy --percent 10 --yes
+vaultsfyi --agent conservative redeem --position NAME --yes
 ```
+
+`--yes` only tells `vaultsfyi` not to ask its own interactive prompt. It is not
+an OpenClaw approval grant. The OpenClaw host or scheduler should still ask the
+human before running direct one-off broadcast commands.
 
 ## Recommended OpenClaw agents
 
@@ -84,6 +91,40 @@ vaultsfyi --agent conservative execute-decision decision.json --packet packet.js
 - **Operator**: validates/plans/executes after user approval.
 
 All agents should use the CLI as the boundary. They should not build raw txs, hold private keys, or call OWS directly.
+
+## Autonomous management
+
+Use a named agent profile for unattended operation. This is the intended
+autonomous path because the policy is bounded by config: wallet, mode,
+preferences, deploy percentage, vault filters, and risk caps.
+
+```bash
+vaultsfyi agent init conservative --wallet ows-conservative --mode dry-run
+vaultsfyi --agent conservative config set agent.mode live
+vaultsfyi --agent conservative config set agent.max_deploy_usd 100
+vaultsfyi --agent conservative config set agent.max_position_pct 25
+vaultsfyi --agent conservative config set execution.deploy_percent 10
+vaultsfyi --agent conservative config set strategy.min_tvl 10000000
+vaultsfyi --agent conservative config set strategy.max_apy 0.15
+vaultsfyi agent run conservative --dry-run
+```
+
+After the profile has been reviewed and intentionally allowed to operate live,
+the autonomous command is:
+
+```bash
+vaultsfyi agent run conservative --execute --yes
+```
+
+Runner policy recommendation:
+
+- allow read-only OpenClaw commands without approval
+- require human approval for direct one-off broadcast commands
+- allow `vaultsfyi agent run NAME --execute --yes` without per-run approval only for named profiles that have been explicitly approved for autonomous live operation
+
+The autonomous profile can still be scheduled externally, for example by cron,
+a job runner, or an OpenClaw host. The CLI runs one pass at a time and acquires
+a wallet lock before broadcasting.
 
 ## Safety expectations
 
@@ -103,4 +144,10 @@ OpenClaw should require approval for:
 vaultsfyi execute-decision decision.json --packet packet.json --yes
 vaultsfyi deploy --percent 10 --yes
 vaultsfyi redeem --position NAME --yes
+```
+
+OpenClaw may run autonomously only through an explicitly approved live profile:
+
+```bash
+vaultsfyi agent run NAME --execute --yes
 ```

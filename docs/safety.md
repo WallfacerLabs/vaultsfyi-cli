@@ -45,11 +45,28 @@ vaultsfyi deploy --percent 10
 vaultsfyi execute-decision decision.json --packet packet.json
 ```
 
-Automation must be explicit:
+`--yes` bypasses the CLI's interactive prompt. It does not mean an external
+allocator, such as OpenClaw, has permission to run the command without host
+approval.
+
+For OpenClaw or another external runner, these direct one-off broadcast commands
+should require human approval even with `--yes`:
 
 ```bash
 vaultsfyi execute-decision decision.json --packet packet.json --yes
+vaultsfyi deploy --percent 10 --yes
+vaultsfyi redeem --position NAME --yes
+vaultsfyi redeem-all --yes
 ```
+
+Unattended operation should use a named live agent profile instead:
+
+```bash
+vaultsfyi agent run NAME --execute --yes
+```
+
+Only allow that autonomous command after the named profile's wallet, filters,
+deploy size, and risk caps have been reviewed.
 
 ## Wallet locks
 
@@ -80,6 +97,10 @@ Require confirmation:
 - `redeem --yes`
 - `redeem-all --yes`
 - `execute-decision --yes`
+
+Autonomous exception:
+
+- `agent run NAME --execute --yes`, but only for a named profile that has been explicitly approved for unattended live operation
 
 ## Known limitations
 

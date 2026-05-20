@@ -85,18 +85,56 @@ These names are snake_case versions of the vaults.fyi `/v2/detailed-vaults` filt
 
 ## Precedence
 
+The CLI builds one effective config for each command. Later layers override
+earlier layers when they set the same key.
+
 For a command:
 
 ```bash
 vaultsfyi --agent conservative deploy --percent 10 --preference blue-chip
 ```
 
-Resolution order:
+Resolution order, from lowest to highest priority:
 
-1. global defaults
-2. global config
-3. agent profile overlay
-4. selected preference overlay into strategy filters
-5. explicit command flags
+1. global defaults: built into the CLI. These are used when no config file sets a value.
+2. global config: `~/.config/vaultsfyi/config.toml`, or `$XDG_CONFIG_HOME/vaultsfyi/config.toml` when `XDG_CONFIG_HOME` is set.
+3. agent profile overlay: `~/.config/vaultsfyi/agents/conservative.toml` when `--agent conservative` is used. This can override any normal config section, such as `wallet`, `strategy`, `risk`, `execution`, or `decision`.
+4. environment overrides: only the mapped runtime fields below, such as wallet, RPC, and vaults.fyi API settings.
+5. selected preference overlay: `[preferences.blue-chip]` is copied into `strategy` for this command only because `--preference blue-chip` was passed.
+6. explicit command flags: command-specific flags such as `--percent 10`, `--dry-run`, `--yes`, or `--execute`.
+
+Environment overrides are:
+
+```bash
+OWS_WALLET
+OWS_CHAIN
+OWS_VAULT_PATH
+OWS_CLI_PATH
+BASE_RPC_URL
+VAULTS_API_KEY
+VAULTS_API_URL
+```
+
+Example:
+
+```toml
+# global config
+[strategy]
+min_tvl = 1000000
+allowed_networks = ["base"]
+
+# agent profile for --agent conservative
+[strategy]
+min_tvl = 5000000
+
+# selected preference for --preference blue-chip
+[preferences.blue-chip]
+min_tvl = 10000000
+allowed_protocols = ["morpho"]
+```
+
+The effective command uses `min_tvl = 10000000`, `allowed_networks = ["base"]`,
+and `allowed_protocols = ["morpho"]`. The preference does not rewrite the config
+file; it only overlays the in-memory config for that command.
 
 Preferences are hard boundaries for OpenClaw decisions. A decision targeting a vault outside the selected preference fails validation.

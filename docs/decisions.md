@@ -137,6 +137,15 @@ vaultsfyi execute-decision decision.json --packet packet.json --yes
 
 Execution validates again, builds the plan again, acquires the wallet lock, signs through OWS, and broadcasts.
 
+For OpenClaw or another external runner, this direct broadcast command should
+require human approval even with `--yes`. `--yes` only bypasses the CLI's own
+interactive prompt. Unattended live operation should use an explicitly approved
+named profile:
+
+```bash
+vaultsfyi agent run NAME --execute --yes
+```
+
 ## Decision config
 
 ```toml
