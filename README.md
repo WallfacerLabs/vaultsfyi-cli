@@ -124,6 +124,7 @@ vaultsfyi wallet address
 vaultsfyi config path
 vaultsfyi config show
 vaultsfyi config set vaults.api_key YOUR_KEY
+# or set VAULTS_API_KEY in an ignored .env file
 
 vaultsfyi preference init blue-chip
 vaultsfyi preference list
@@ -420,6 +421,22 @@ pip install -e '.[test]'
 pytest
 python -m compileall agent tests
 ```
+
+Live end-to-end tests are opt-in and use the real CLI process plus the real
+Vaults.fyi API. Copy `.env.example` to `.env`, add `VAULTS_API_KEY`, and enable
+the desired level:
+
+```bash
+cp .env.example .env
+# edit .env and set VAULTS_API_KEY=...
+VAULTSFYI_RUN_E2E=1 pytest -m e2e
+VAULTSFYI_RUN_E2E_FULL=1 pytest -m e2e
+```
+
+The full sweep covers no-funds API commands and throttles requests with
+`VAULTSFYI_E2E_RATE_LIMIT_SECONDS` to respect basic API rate limits. Funded or
+live-broadcast commands remain outside e2e automation unless explicitly tested
+with a dedicated funded wallet.
 
 ## Notes
 

@@ -10,6 +10,7 @@ import json
 import os
 import shutil
 import subprocess
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
@@ -22,7 +23,7 @@ class X402Client:
 
     def __init__(self, wallet=None, base_url: str = "https://api.vaults.fyi"):
         """Initialize x402 client."""
-        load_dotenv()
+        load_dotenv(Path.cwd() / ".env", override=False)
         self.wallet = wallet
         self.base_url = base_url.rstrip('/')
         self.ows_cli = os.getenv('OWS_CLI_PATH') or shutil.which('ows')

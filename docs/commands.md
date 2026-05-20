@@ -125,6 +125,7 @@ Examples:
 
 ```bash
 vaultsfyi config set vaults.api_key YOUR_KEY
+# or set VAULTS_API_KEY in an ignored .env file
 vaultsfyi config set strategy.min_apy 0.03
 vaultsfyi --agent conservative config set strategy.max_apy 0.15
 ```

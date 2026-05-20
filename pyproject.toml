@@ -36,3 +36,6 @@ include = ["agent*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+  "e2e: live CLI/API tests that require VAULTS_API_KEY, network access, and explicit opt-in",
+]

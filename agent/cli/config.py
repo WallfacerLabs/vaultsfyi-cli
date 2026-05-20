@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import tomli_w
+from dotenv import load_dotenv
 
 DETAILED_VAULT_FILTER_DEFAULTS: dict[str, Any] = {
     "page": None,
@@ -157,6 +158,7 @@ def load_toml(path: Path) -> dict[str, Any]:
 
 
 def load_config(config_path: Path | None = None, agent_name: str | None = None) -> dict[str, Any]:
+    load_dotenv(Path.cwd() / ".env", override=False)
     path = config_path or default_config_path()
     cfg = deepcopy(DEFAULT_CONFIG)
 

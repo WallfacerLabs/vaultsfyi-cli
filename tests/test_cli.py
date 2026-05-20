@@ -120,6 +120,19 @@ def test_exported_env_restores_and_clears_managed_values(monkeypatch):
     assert os.environ["OWS_VAULT_PATH"] == "/external-vault"
 
 
+def test_load_config_reads_cwd_dotenv_without_overriding_env(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    dotenv_path = tmp_path / ".env"
+    dotenv_path.write_text("VAULTS_API_KEY=dotenv-key\nVAULTS_API_URL=https://dotenv.example\n")
+
+    monkeypatch.delenv("VAULTS_API_KEY", raising=False)
+    monkeypatch.setenv("VAULTS_API_URL", "https://env.example")
+    cfg = config_mod.load_config()
+
+    assert cfg["vaults"]["api_key"] == "dotenv-key"
+    assert cfg["vaults"]["api_url"] == "https://env.example"
+
+
 def test_help_lists_core_commands():
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
