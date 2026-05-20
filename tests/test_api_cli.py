@@ -32,9 +32,7 @@ def invoke_api(monkeypatch, args):
     return fake.calls[-1], json.loads(result.stdout)
 
 
-@pytest.mark.parametrize(
-    ("args", "endpoint", "params"),
-    [
+API_COMMAND_CASES = [
         (["api", "health"], "/v2/health", {}),
         (
             ["api", "vaults", "list", "--page", "1", "--per-page", "2", "--network", "base", "--asset-symbol", "USDC", "--only-transactional"],
@@ -95,8 +93,10 @@ def invoke_api(monkeypatch, args):
         (["api", "nrt", "total-assets", "base", VAULT_ID], "/v2/nrt/vault/base/vault-1/totalAssets", {}),
         (["api", "nrt", "underlying-asset-price", "base", VAULT_ID], "/v2/nrt/vault/base/vault-1/underlyingAssetPrice", {}),
         (["api", "request", "/v2/custom", "-q", "foo=bar", "-q", "foo=baz"], "/v2/custom", {"foo": ["bar", "baz"]}),
-    ],
-)
+]
+
+
+@pytest.mark.parametrize(("args", "endpoint", "params"), API_COMMAND_CASES)
 def test_api_commands_map_to_expected_endpoint_and_params(monkeypatch, args, endpoint, params):
     call, payload = invoke_api(monkeypatch, args)
     assert call["endpoint"] == endpoint
