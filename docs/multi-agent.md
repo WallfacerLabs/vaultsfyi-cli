@@ -73,8 +73,8 @@ vaultsfyi agent run conservative --execute --yes
 This is the preferred autonomous-management entrypoint. An OpenClaw host or
 scheduler may run it without per-run approval only after the specific named
 profile has been approved for unattended live operation. Direct one-off
-broadcast commands such as `deploy --yes`, `redeem --yes`, and
-`execute-decision --yes` should still require human approval in OpenClaw
+broadcast commands such as `deploy --yes`, `redeem --yes`, `redeem-all --yes`,
+and `execute-decision --yes` should still require human approval in OpenClaw
 contexts.
 
 ## Wallet locks

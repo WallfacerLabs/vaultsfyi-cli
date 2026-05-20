@@ -25,6 +25,85 @@ vaultsfyi redeem-all [--dry-run] [--yes]
 vaultsfyi shell
 ```
 
+## Low-level API commands
+
+The `api` namespace maps directly to the Vaults.fyi V2 API. Use `-o json` to
+return the exact API response for scripts; table output is a compact human
+summary. List filters accept repeated flags or comma-separated values.
+
+```bash
+vaultsfyi api health
+vaultsfyi api request /v2/vaults -q network=base -q assetSymbol=USDC
+```
+
+General/reference endpoints:
+
+```bash
+vaultsfyi api vaults list [--page N] [--per-page N] [--network NAME_OR_CAIP] [--asset-symbol SYMBOL]
+vaultsfyi api assets list [--page N] [--per-page N] [--network NAME_OR_CAIP]
+vaultsfyi api tags
+vaultsfyi api networks
+vaultsfyi api curators
+vaultsfyi api protocols
+```
+
+Detailed vault endpoints:
+
+```bash
+vaultsfyi api detailed-vaults list [--allowed-asset USDC] [--allowed-network base] [--min-tvl 1000000] [--sort-by tvl]
+vaultsfyi api detailed-vaults get NETWORK VAULT_ID
+vaultsfyi api detailed-vaults apy NETWORK VAULT_ID
+vaultsfyi api detailed-vaults tvl NETWORK VAULT_ID
+```
+
+Historical endpoints:
+
+```bash
+vaultsfyi api historical vault NETWORK VAULT_ID [--apy-interval 7day] [--granularity 1day]
+vaultsfyi api historical apy NETWORK VAULT_ID
+vaultsfyi api historical tvl NETWORK VAULT_ID
+vaultsfyi api historical share-price NETWORK VAULT_ID
+vaultsfyi api historical asset-prices NETWORK ASSET_ADDRESS
+```
+
+Portfolio endpoints:
+
+```bash
+vaultsfyi api portfolio best-vault USER_ADDRESS
+vaultsfyi api portfolio positions USER_ADDRESS [--sort-by balanceUsd] [--apy-interval 7day]
+vaultsfyi api portfolio position USER_ADDRESS NETWORK VAULT_ID
+vaultsfyi api portfolio best-deposit-options USER_ADDRESS [--max-vaults-per-asset 3]
+vaultsfyi api portfolio idle-assets USER_ADDRESS [--sort-by balanceUsd] [--sort-direction desc]
+vaultsfyi api portfolio total-returns USER_ADDRESS NETWORK VAULT_ID
+vaultsfyi api portfolio events USER_ADDRESS NETWORK VAULT_ID
+```
+
+Transaction endpoints:
+
+```bash
+vaultsfyi api transactions context USER_ADDRESS NETWORK VAULT_ID
+vaultsfyi api transactions suffix USER_ADDRESS VAULT_ID
+vaultsfyi api transactions payload ACTION USER_ADDRESS NETWORK VAULT_ID --asset-address ASSET_ADDRESS [--amount AMOUNT] [--all]
+vaultsfyi api transactions rewards context USER_ADDRESS
+vaultsfyi api transactions rewards claim USER_ADDRESS --claim-id CLAIM_ID
+```
+
+Benchmark and NRT endpoints:
+
+```bash
+vaultsfyi api benchmarks get NETWORK --code usd
+vaultsfyi api benchmarks history NETWORK --code eth [--page N] [--per-page N]
+vaultsfyi api nrt vault NETWORK VAULT_ID
+vaultsfyi api nrt share-price NETWORK VAULT_ID
+vaultsfyi api nrt total-supply NETWORK VAULT_ID
+vaultsfyi api nrt total-assets NETWORK VAULT_ID
+vaultsfyi api nrt underlying-asset-price NETWORK VAULT_ID
+```
+
+Read-only API transaction commands only return transaction payloads. They do
+not sign or broadcast. Use the existing guarded execution commands for live
+chain writes.
+
 ## Wallet commands
 
 ```bash
@@ -96,6 +175,6 @@ vaultsfyi execute-decision decision.json --packet packet.json --yes
 `decision-packet`, `validate-decision`, and `plan-decision` are read-only with respect to the chain. `execute-decision` signs and broadcasts.
 
 When OpenClaw or another external runner is operating the CLI, direct broadcast
-commands such as `execute-decision --yes`, `deploy --yes`, and `redeem --yes`
-should still require host-level human approval. `--yes` only bypasses the CLI's
-interactive prompt.
+commands such as `execute-decision --yes`, `deploy --yes`, `redeem --yes`, and
+`redeem-all --yes` should still require host-level human approval. `--yes` only
+bypasses the CLI's interactive prompt.

@@ -89,6 +89,7 @@ Allowed without confirmation:
 - `decision-packet`
 - `validate-decision`
 - `plan-decision`
+- `api ...` commands that only read data or generate unsigned transaction payloads
 - dry-run commands
 
 Require confirmation:
@@ -101,6 +102,11 @@ Require confirmation:
 Autonomous exception:
 
 - `agent run NAME --execute --yes`, but only for a named profile that has been explicitly approved for unattended live operation
+
+`api ...` commands do not sign or broadcast chain transactions. They can still
+consume vaults.fyi API credits or trigger x402 payment handling when no API key
+is configured, so hosts that require approval for paid network calls should
+enforce that separately from chain-broadcast approval.
 
 ## Known limitations
 

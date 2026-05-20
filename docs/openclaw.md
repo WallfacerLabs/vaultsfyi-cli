@@ -133,6 +133,7 @@ OpenClaw may run freely:
 ```bash
 vaultsfyi status
 vaultsfyi opportunities --preference blue-chip
+vaultsfyi api vaults list --network base --asset-symbol USDC -o json
 vaultsfyi decision-packet --preference blue-chip -o json
 vaultsfyi validate-decision decision.json --packet packet.json -o json
 vaultsfyi plan-decision decision.json --packet packet.json -o json
@@ -144,7 +145,13 @@ OpenClaw should require approval for:
 vaultsfyi execute-decision decision.json --packet packet.json --yes
 vaultsfyi deploy --percent 10 --yes
 vaultsfyi redeem --position NAME --yes
+vaultsfyi redeem-all --yes
 ```
+
+`vaultsfyi api ...` commands are chain read-only, including transaction payload
+commands that return unsigned payloads. They may still consume vaults.fyi API
+credits or use x402 payment handling, so paid API access should be governed by
+the host's cost policy.
 
 OpenClaw may run autonomously only through an explicitly approved live profile:
 

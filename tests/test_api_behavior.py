@@ -1,5 +1,6 @@
 from agent.api.opportunities import OpportunityAPI
 from agent.api.transactions import TransactionAPI
+from agent.api.v2 import query_params
 
 
 class FakeClient:
@@ -302,3 +303,21 @@ def test_redeem_transaction_uses_only_default_action():
     )
 
     assert transactions == [{"to": "0xfirst", "data": "0xaaa", "value": "0"}]
+
+
+def test_v2_query_params_normalize_without_losing_arrays_or_false_values():
+    assert query_params(
+        {
+            "page": 0,
+            "empty": "",
+            "missing": None,
+            "enabled": True,
+            "disabled": False,
+            "items": ["USDC", "", None, "WETH"],
+        }
+    ) == {
+        "page": 0,
+        "enabled": "true",
+        "disabled": "false",
+        "items": ["USDC", "WETH"],
+    }

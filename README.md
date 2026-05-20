@@ -13,6 +13,7 @@ The CLI binary is `vaultsfyi`.
 - Emits decision packets for OpenClaw or another external allocator
 - Validates allocator decisions before planning or execution
 - Generates and broadcasts approve/deposit/redeem transactions through OWS
+- Exposes the full Vaults.fyi V2 API under `vaultsfyi api`
 - Supports human table output and machine-readable JSON
 - Provides an interactive command shell
 - Keeps the Python API available: `from agent import Agent`
@@ -25,6 +26,7 @@ The CLI binary is `vaultsfyi`.
 - [Preferences and hard filters](docs/preferences.md)
 - [Decision packet and validation model](docs/decisions.md)
 - [OpenClaw allocator workflow](docs/openclaw.md)
+- [OpenClaw Vaults CLI skill](skills/openclaw-vaultsfyi-cli/SKILL.md)
 - [Command reference](docs/commands.md)
 - [Safety model](docs/safety.md)
 
@@ -75,6 +77,8 @@ vaultsfyi status
 vaultsfyi idle
 vaultsfyi positions
 vaultsfyi opportunities --limit 10
+vaultsfyi api networks
+vaultsfyi api vaults list --network base --asset-symbol USDC
 ```
 
 Transactional commands ask before broadcasting:
@@ -129,6 +133,14 @@ vaultsfyi decision-packet --preference blue-chip -o json
 vaultsfyi validate-decision decision.json --packet packet.json
 vaultsfyi plan-decision decision.json --packet packet.json
 vaultsfyi execute-decision decision.json --packet packet.json --yes
+
+vaultsfyi api health
+vaultsfyi api vaults list --network base --asset-symbol USDC
+vaultsfyi api detailed-vaults list --allowed-asset USDC --allowed-network base --sort-by apy7day --sort-order desc
+vaultsfyi api historical apy base VAULT_ID --granularity 1day --from-timestamp 1700000000
+vaultsfyi api portfolio positions USER_ADDRESS
+vaultsfyi api transactions payload deposit USER_ADDRESS base VAULT_ID --asset-address ASSET_ADDRESS --amount 1000000
+vaultsfyi api nrt vault base VAULT_ID
 ```
 
 Global flags:
@@ -140,6 +152,8 @@ vaultsfyi --config ~/.config/vaultsfyi/config.toml status
 ```
 
 `--agent NAME` is optional and only needed when you deliberately use named multi-agent profiles.
+
+`vaultsfyi api ... -o json` returns the raw Vaults.fyi API response. Table mode prints a compact summary for humans. API transaction commands fetch ready-to-sign payloads only; broadcasting still happens only through the guarded `deploy`, `redeem`, `redeem-all`, and `execute-decision` flows. API calls may still consume vaults.fyi credits or trigger x402 payment handling when no API key is configured.
 
 ## Interactive shell
 
@@ -385,8 +399,9 @@ vaultsfyi agent run conservative --execute --yes
 
 This is the intended autonomous-management command. Allow it without per-run
 approval only for named profiles that have been reviewed for unattended live
-operation. Direct one-off commands such as `deploy --yes`, `redeem --yes`, and
-`execute-decision --yes` should remain approval-required for OpenClaw.
+operation. Direct one-off commands such as `deploy --yes`, `redeem --yes`,
+`redeem-all --yes`, and `execute-decision --yes` should remain
+approval-required for OpenClaw.
 
 Live transaction commands take a wallet lock under `~/.local/state/vaultsfyi/locks/` so two processes cannot broadcast from the same OWS wallet at the same time.
 
@@ -408,7 +423,7 @@ python -m compileall agent tests
 
 ## Notes
 
-- Base + USDC focused in the current implementation
+- High-level strategy and execution commands currently target Base/USDC; the low-level `vaultsfyi api` namespace covers the Vaults.fyi V2 API surface across supported networks and assets.
 - vaults.fyi API key is optional; x402 payments can be used where available
 - OWS owns key storage/signing; this repo should not grow private-key management again
 

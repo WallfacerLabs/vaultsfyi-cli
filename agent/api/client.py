@@ -10,6 +10,7 @@ import json
 import os
 import shutil
 import subprocess
+from typing import Any
 from urllib.parse import urlencode
 
 import requests
@@ -19,7 +20,7 @@ from dotenv import load_dotenv
 class X402Client:
     """Client for making vaults.fyi API requests with OWS-backed payments."""
 
-    def __init__(self, wallet, base_url: str = "https://api.vaults.fyi"):
+    def __init__(self, wallet=None, base_url: str = "https://api.vaults.fyi"):
         """Initialize x402 client."""
         load_dotenv()
         self.wallet = wallet
@@ -27,7 +28,7 @@ class X402Client:
         self.ows_cli = os.getenv('OWS_CLI_PATH') or shutil.which('ows')
         self.api_key = os.getenv('VAULTS_API_KEY')
 
-    def make_request(self, endpoint: str, params: dict = None, timeout: int = 60) -> dict:
+    def make_request(self, endpoint: str, params: dict[str, Any] | None = None, timeout: int = 60) -> dict:
         """
         Make an API request.
 
@@ -45,7 +46,7 @@ class X402Client:
         if self.api_key:
             headers['x-api-key'] = self.api_key
 
-        response = requests.get(url, params=params, headers=headers, timeout=10)
+        response = requests.get(url, params=params, headers=headers, timeout=timeout)
 
         if response.status_code == 200:
             return response.json()
@@ -53,9 +54,9 @@ class X402Client:
         if response.status_code == 402:
             return self._make_paid_request(url, params=params, timeout=timeout)
 
-        raise Exception(f"API request failed: {response.status_code} {response.text}")
+        raise RuntimeError(f"API request failed: {response.status_code} {self._error_message(response)}")
 
-    def _make_paid_request(self, url: str, params: dict = None, timeout: int = 60) -> dict:
+    def _make_paid_request(self, url: str, params: dict[str, Any] | None = None, timeout: int = 60) -> dict:
         """Use `ows pay request` for x402-paid requests."""
         if not self.ows_cli:
             raise RuntimeError(
@@ -63,6 +64,10 @@ class X402Client:
                 "Install it with `curl -fsSL https://docs.openwallet.sh/install.sh | bash` "
                 "or set OWS_CLI_PATH. The Python agent will not handle plaintext private keys."
             )
+        if self.wallet is None:
+            from agent.core.wallet import Wallet
+
+            self.wallet = Wallet()
 
         if params:
             separator = '&' if '?' in url else '?'
@@ -103,3 +108,14 @@ class X402Client:
             return json.loads(body)
         except json.JSONDecodeError as exc:
             raise RuntimeError(f"OWS paid request did not return JSON: {body[:500]}") from exc
+
+    @staticmethod
+    def _error_message(response: requests.Response) -> str:
+        try:
+            body = response.json()
+        except ValueError:
+            return response.text
+        if isinstance(body, dict):
+            parts = [str(body.get(key)) for key in ("error", "message", "errorId") if body.get(key)]
+            return " ".join(parts) or json.dumps(body)
+        return json.dumps(body)

@@ -1,0 +1,4 @@
+interface:
+  display_name: "OpenClaw Vaults CLI"
+  short_description: "Operate vaultsfyi safely with OpenClaw"
+  default_prompt: "Use $openclaw-vaultsfyi-cli to configure a bounded vault allocation workflow."

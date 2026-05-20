@@ -15,6 +15,7 @@ import typer
 from ows import create_wallet, get_wallet
 from typer.main import get_command
 
+from agent.cli.api import api_app
 from agent.cli import config as config_mod
 from agent.cli.context import CliContext, build_context
 from agent.cli.output import OutputFormat, confirm_or_abort, echo_error, echo_json, format_apy, format_usd, print_table
@@ -35,6 +36,7 @@ app.add_typer(wallet_app, name="wallet")
 app.add_typer(config_app, name="config")
 app.add_typer(agent_app, name="agent")
 app.add_typer(preference_app, name="preference")
+app.add_typer(api_app, name="api")
 
 
 def _ctx() -> CliContext:
