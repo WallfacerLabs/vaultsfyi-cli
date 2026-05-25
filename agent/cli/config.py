@@ -170,8 +170,11 @@ def load_config(config_path: Path | None = None, agent_name: str | None = None) 
         profile_path = agent_config_path(agent_name)
         if not profile_path.exists():
             raise ValueError(f"agent profile '{agent_name}' does not exist at {profile_path}")
-        cfg = _deep_merge(cfg, load_toml(profile_path))
+        profile_cfg = load_toml(profile_path)
+        cfg = _deep_merge(cfg, profile_cfg)
         cfg.setdefault("agent", {})["name"] = agent_name
+        if "preference" not in profile_cfg.get("agent", {}):
+            cfg["agent"]["preference"] = None
         cfg["agent"]["profile_path"] = str(profile_path)
     else:
         cfg.setdefault("agent", {})["name"] = cfg.get("agent", {}).get("name") or "default"

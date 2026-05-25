@@ -1,6 +1,7 @@
 import os
 import tempfile
 
+import pytest
 from eth_account import Account
 from ows import import_wallet_private_key
 
@@ -60,3 +61,32 @@ def test_agent_accepts_config_dict(monkeypatch):
     agent = Agent(config=cfg)
     assert agent.network == "base"
     assert agent.wallet.address == "0xabc"
+
+
+def test_agent_rejects_out_of_range_percentages():
+    agent = Agent.__new__(Agent)
+
+    with pytest.raises(ValueError, match="Deploy percentage"):
+        agent.prepare_deploy(0)
+    with pytest.raises(ValueError, match="Deploy percentage"):
+        agent.prepare_deploy(101)
+    with pytest.raises(ValueError, match="Redeem percentage"):
+        agent.prepare_redeem("pos", -1)
+    with pytest.raises(ValueError, match="Redeem percentage"):
+        agent.prepare_redeem("pos", 101)
+
+
+def test_prepare_redeem_rejects_ambiguous_nicknames():
+    class FakeExecutor:
+        def validate_gas_balance(self):
+            return True, ""
+
+    agent = Agent.__new__(Agent)
+    agent.executor = FakeExecutor()
+    agent.get_positions = lambda: [
+        {"nickname": "SameVault", "vault_name": "Same Vault A", "vault_address": "0xa", "balance_usd": 1},
+        {"nickname": "SameVault", "vault_name": "Same Vault B", "vault_address": "0xb", "balance_usd": 1},
+    ]
+
+    with pytest.raises(ValueError, match="ambiguous"):
+        agent.prepare_redeem("SameVault", 50)

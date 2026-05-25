@@ -694,8 +694,12 @@ def wallet_create(
         except Exception:
             wallet = create_wallet(wallet_name, passphrase=passphrase, vault_path_opt=vault_path)
             created = True
-        cfg["wallet"]["name"] = wallet_name
-        path = config_mod.write_config(cfg, ctx.config_path)
+        path = config_mod.agent_config_path(ctx.agent_name) if ctx.agent_name else (ctx.config_path or config_mod.default_config_path())
+        file_cfg = config_mod.load_toml(path) if path.exists() else {}
+        file_cfg.setdefault("wallet", {})["name"] = wallet_name
+        if cfg["wallet"].get("chain") is not None:
+            file_cfg["wallet"]["chain"] = cfg["wallet"]["chain"]
+        path = config_mod.write_toml_path(path, file_cfg)
         evm = next(a for a in wallet["accounts"] if a["chain_id"].startswith("eip155:"))
         payload = {"created": created, "wallet": wallet_name, "wallet_id": wallet["id"], "address": evm["address"], "config_path": str(path)}
         if ctx.output == OutputFormat.json:

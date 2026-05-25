@@ -94,6 +94,8 @@ class Agent:
 
     def prepare_deploy(self, percentage: float) -> dict:
         """Validate and build a deployment plan without broadcasting."""
+        if percentage <= 0 or percentage > 100:
+            raise ValueError("Deploy percentage must be greater than 0 and at most 100")
         is_sufficient, error_msg = self.executor.validate_gas_balance()
         if not is_sufficient:
             raise ValueError(error_msg)
@@ -216,12 +218,18 @@ class Agent:
 
     def prepare_redeem(self, position_nickname: str, percentage: float = 100.0) -> dict:
         """Validate and build a redemption plan without broadcasting."""
+        if percentage <= 0 or percentage > 100:
+            raise ValueError("Redeem percentage must be greater than 0 and at most 100")
         is_sufficient, error_msg = self.executor.validate_gas_balance()
         if not is_sufficient:
             raise ValueError(error_msg)
 
         positions = self.get_positions()
-        position = next((p for p in positions if p["nickname"] == position_nickname), None)
+        matches = [p for p in positions if p["nickname"] == position_nickname]
+        if len(matches) > 1:
+            vaults = ", ".join(f"{p['vault_name']} ({p['vault_address']})" for p in matches)
+            raise ValueError(f"Position nickname '{position_nickname}' is ambiguous. Matching vaults: {vaults}")
+        position = matches[0] if matches else None
         if position is None:
             available = ", ".join(p["nickname"] for p in positions) or "none"
             raise ValueError(f"Position '{position_nickname}' not found. Available positions: {available}")
@@ -259,6 +267,8 @@ class Agent:
             raise ValueError(f"Position vault '{vault_address}' not found")
 
         if amount_usd is not None:
+            if amount_usd <= 0:
+                raise ValueError("Redeem amount must be positive")
             if amount_usd > position["balance_usd"]:
                 raise ValueError(f"Redeem amount {format_usd(amount_usd)} exceeds position balance {format_usd(position['balance_usd'])}")
             percentage = (amount_usd / position["balance_usd"]) * 100 if position["balance_usd"] else 0

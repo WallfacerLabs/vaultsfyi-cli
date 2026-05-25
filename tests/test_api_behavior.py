@@ -1,6 +1,9 @@
+import pytest
+
 from agent.api.opportunities import OpportunityAPI
 from agent.api.transactions import TransactionAPI
 from agent.api.v2 import query_params
+from agent.strategy.criteria import VaultCriteria
 
 
 class FakeClient:
@@ -303,6 +306,33 @@ def test_redeem_transaction_uses_only_default_action():
     )
 
     assert transactions == [{"to": "0xfirst", "data": "0xaaa", "value": "0"}]
+
+
+def test_transaction_generation_rejects_empty_action_sets():
+    api = TransactionAPI(FakeClient({"actions": []}))
+
+    with pytest.raises(ValueError, match="no deposit transaction actions"):
+        api.generate_deposit_tx("0xwallet", "0xvault", 1.0, "0xasset")
+
+    with pytest.raises(ValueError, match="no redeem transaction actions"):
+        api.generate_redeem_tx("0xwallet", "0xvault", 1.0, 18, "0xasset")
+
+
+def test_transaction_generation_rejects_malformed_actions():
+    api = TransactionAPI(FakeClient({"actions": [{"tx": {"to": "0xvault"}}]}))
+
+    with pytest.raises(ValueError, match="without tx.to or tx.data"):
+        api.generate_deposit_tx("0xwallet", "0xvault", 1.0, "0xasset")
+
+
+def test_vault_criteria_compares_addresses_case_insensitively():
+    criteria = VaultCriteria({"vault_whitelist": ["0xabc"]})
+
+    assert criteria.apply_vault_whitelist([{"vault_address": "0xABC"}]) == [{"vault_address": "0xABC"}]
+    assert criteria.exclude_existing_positions(
+        [{"vault_address": "0xABC"}, {"vault_address": "0xDEF"}],
+        [{"vault_address": "0xabc"}],
+    ) == [{"vault_address": "0xDEF"}]
 
 
 def test_v2_query_params_normalize_without_losing_arrays_or_false_values():

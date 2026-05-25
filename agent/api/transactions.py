@@ -13,6 +13,16 @@ class TransactionAPI:
         """Initialize with x402 client"""
         self.client = client
 
+    def _transaction_from_action(self, action: dict) -> dict:
+        tx = action.get('tx') or {}
+        if not tx.get('to') or tx.get('data') is None:
+            raise ValueError("Vaults API returned a transaction action without tx.to or tx.data")
+        return {
+            'to': tx.get('to'),
+            'data': tx.get('data'),
+            'value': tx.get('value', '0'),
+        }
+
     def generate_deposit_tx(
         self,
         user_address: str,
@@ -37,15 +47,10 @@ class TransactionAPI:
 
         response = self.client.make_request(endpoint, params)
 
-        # Parse transaction actions (tx data is nested under action['tx'])
-        transactions = []
-        for action in response.get('actions', []):
-            tx = action.get('tx', {})
-            transactions.append({
-                'to': tx.get('to'),
-                'data': tx.get('data'),
-                'value': tx.get('value', '0'),
-            })
+        actions = response.get('actions', [])
+        if not actions:
+            raise ValueError("Vaults API returned no deposit transaction actions")
+        transactions = [self._transaction_from_action(action) for action in actions]
 
         return transactions
 
@@ -90,13 +95,9 @@ class TransactionAPI:
         transactions = []
         actions = response.get('actions', [])
 
-        if actions:
-            action = actions[0]
-            tx = action.get('tx', {})
-            transactions.append({
-                'to': tx.get('to'),
-                'data': tx.get('data'),
-                'value': tx.get('value', '0'),
-            })
+        if not actions:
+            raise ValueError("Vaults API returned no redeem transaction actions")
+
+        transactions.append(self._transaction_from_action(actions[0]))
 
         return transactions

@@ -262,6 +262,15 @@ def _candidate_increases_bucket_exposure(candidate: dict[str, Any], bucket: dict
     return not source or source not in bucket_addresses
 
 
+def _position_balances_by_address(positions: list[dict]) -> dict[str, float]:
+    balances: dict[str, float] = {}
+    for position in positions:
+        key = _address_key(position.get("vault_address"))
+        if key:
+            balances[key] = balances.get(key, 0.0) + float(position.get("balance_usd", 0))
+    return balances
+
+
 def build_candidate_actions(agent, cfg: dict[str, Any], opportunities: list[dict], positions: list[dict], idle_assets: dict) -> list[dict]:
     """Build legal action candidates from already-filtered opportunities."""
     dc = decision_config(cfg)
@@ -292,6 +301,8 @@ def build_candidate_actions(agent, cfg: dict[str, Any], opportunities: list[dict
     if bucket_state:
         deploy_amount = min(deploy_amount, float(bucket_state["remaining_deploy_usd"]))
     existing_vault_addresses = {_address_key(position.get("vault_address")) for position in positions}
+    position_balances = _position_balances_by_address(positions)
+    max_single_usd = float(max_single) if max_single is not None else None
 
     for vault in opportunities[:10]:
         vault_address = vault.get("vault_address")
@@ -328,6 +339,13 @@ def build_candidate_actions(agent, cfg: dict[str, Any], opportunities: list[dict
             target_address = vault["vault_address"]
             if _address_key(target_address) == _address_key(source_address):
                 continue
+            target_existing_usd = position_balances.get(_address_key(target_address), 0.0)
+            target_capacity_limits = []
+            if position_cap_usd is not None:
+                target_capacity_limits.append(max(0.0, position_cap_usd - target_existing_usd))
+            if max_single_usd is not None:
+                target_capacity_limits.append(max(0.0, max_single_usd - target_existing_usd))
+            target_capacity = min(target_capacity_limits) if target_capacity_limits else None
             target_apy = float(vault.get("apy", 0))
             apy_delta = target_apy - source_apy
             if apy_delta < min_apy_improvement:
@@ -336,10 +354,10 @@ def build_candidate_actions(agent, cfg: dict[str, Any], opportunities: list[dict
             full_amount = source_balance
             partial_amount = source_balance * (max_rebalance_pct / 100)
             amounts = []
-            if position_cap_usd is None or full_amount <= position_cap_usd:
+            if target_capacity is None or full_amount <= target_capacity:
                 amounts.append(("rebalance", full_amount))
-            if position_cap_usd is not None:
-                partial_amount = min(partial_amount, position_cap_usd)
+            if target_capacity is not None:
+                partial_amount = min(partial_amount, target_capacity)
             if allow_partial and partial_amount < full_amount:
                 amounts.append(("partial_rebalance", partial_amount))
             if bucket_state and not source_in_bucket:
@@ -416,6 +434,9 @@ def build_decision_packet(agent, cfg: dict[str, Any], preference_name: str | Non
                 "max_deploy_usd": resolved_cfg.get("agent", {}).get("max_deploy_usd"),
                 "max_position_pct": resolved_cfg.get("agent", {}).get("max_position_pct"),
             },
+            "risk_caps": {
+                "max_single_vault_usd": resolved_cfg.get("risk", {}).get("max_single_vault_usd"),
+            },
         },
     }
 
@@ -478,6 +499,39 @@ def validate_decision(decision: dict[str, Any], packet: dict[str, Any]) -> dict[
                 remaining_bucket_usd = math.nan
             if math.isfinite(remaining_bucket_usd) and amount > remaining_bucket_usd + 1e-9:
                 violations.append("candidate exceeds preference bucket remaining deploy capacity")
+
+        if target and candidate_type != "hold" and math.isfinite(amount):
+            constraints = packet.get("constraints", {})
+            target_limits = []
+            positions = packet.get("current_positions", [])
+            idle_assets = packet.get("idle_assets", {})
+            try:
+                target_existing_usd = _position_balances_by_address(positions).get(_address_key(target), 0.0)
+            except (TypeError, ValueError):
+                violations.append("current position balance is invalid")
+                target_existing_usd = math.nan
+            try:
+                portfolio_usd = (
+                    float(idle_assets.get("usdc_balance", 0))
+                    + sum(float(position.get("balance_usd", 0)) for position in positions)
+                )
+            except (TypeError, ValueError):
+                violations.append("portfolio value is invalid")
+                portfolio_usd = math.nan
+            max_position_pct = constraints.get("agent_caps", {}).get("max_position_pct")
+            if max_position_pct is not None and math.isfinite(portfolio_usd):
+                try:
+                    target_limits.append(portfolio_usd * (float(max_position_pct) / 100))
+                except (TypeError, ValueError):
+                    violations.append("max_position_pct is invalid")
+            max_single = constraints.get("risk_caps", {}).get("max_single_vault_usd")
+            if max_single is not None:
+                try:
+                    target_limits.append(float(max_single))
+                except (TypeError, ValueError):
+                    violations.append("max_single_vault_usd is invalid")
+            if target_limits and math.isfinite(target_existing_usd) and target_existing_usd + amount > min(target_limits) + 1e-9:
+                violations.append("candidate exceeds target vault allocation cap")
 
         dc = packet.get("constraints", {}).get("decision", {})
         breakeven = candidate.get("breakeven_days")

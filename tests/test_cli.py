@@ -211,6 +211,27 @@ def test_global_agent_profile_selects_wallet(monkeypatch, tmp_path):
     assert data["wallet"]["name"] == "ows-high-yield"
 
 
+def test_agent_wallet_create_updates_profile_without_persisting_env_secret(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("VAULTS_API_KEY", "env-secret")
+    monkeypatch.setattr("agent.cli.main.get_wallet", lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("missing")))
+    monkeypatch.setattr(
+        "agent.cli.main.create_wallet",
+        lambda *args, **kwargs: {"id": "wallet-id", "accounts": [{"chain_id": "eip155:8453", "address": "0xabc"}]},
+    )
+    runner.invoke(app, ["agent", "init", "conservative", "--wallet", "ows-conservative"])
+
+    result = runner.invoke(app, ["--agent", "conservative", "-o", "json", "wallet", "create"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["config_path"].endswith("agents/conservative.toml")
+    profile = config_mod.load_toml(config_mod.agent_config_path("conservative"))
+    assert profile["wallet"]["name"] == "ows-conservative"
+    assert profile.get("vaults", {}).get("api_key") is None
+    assert not config_mod.default_config_path().exists()
+
+
 def test_config_show_hides_advanced_sections_by_default(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     result = runner.invoke(app, ["-o", "json", "config", "show"])
@@ -276,6 +297,21 @@ def test_agent_run_preference_option_overrides_profile_default(monkeypatch, tmp_
     data = json.loads(result.stdout)
     assert data["preference"] == "degen"
     assert data["preference_bucket"]["max_pct"] == 10.0
+
+
+def test_agent_run_does_not_inherit_global_preference(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setattr(CliContext, "agent", fake_agent)
+    runner.invoke(app, ["preference", "init", "global"])
+    runner.invoke(app, ["config", "set", "agent.preference", "global"])
+    runner.invoke(app, ["agent", "init", "conservative", "--wallet", "ows-conservative"])
+
+    result = runner.invoke(app, ["-o", "json", "agent", "run", "conservative", "--dry-run"])
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["preference"] is None
+    assert data["preference_bucket"] is None
 
 
 def test_preference_init_set_and_list(monkeypatch, tmp_path):
@@ -452,6 +488,44 @@ def test_validate_decision_rejects_preference_bucket_capacity_violation():
     assert "candidate exceeds preference bucket remaining deploy capacity" in result["violations"]
 
 
+def test_validate_decision_rejects_target_allocation_cap_violation():
+    packet = {
+        "schema_version": "vaultsfyi.decision-packet.v1",
+        "idle_assets": {"usdc_balance": 41.0},
+        "eligible_vaults": [{"vault_address": "0xTARGET"}],
+        "current_positions": [
+            {"vault_address": "0xSOURCE", "balance_usd": 50.0},
+            {"vault_address": "0xTARGET", "balance_usd": 9.0},
+        ],
+        "candidate_actions": [
+            {
+                "id": "partial_rebalance:0xSOURCE:0xTARGET:10.000000",
+                "type": "partial_rebalance",
+                "source_vault_address": "0xSOURCE",
+                "target_vault_address": "0xTARGET",
+                "amount_usd": 10.0,
+                "annual_yield_gain_usd": 10.0,
+                "breakeven_days": 1,
+                "estimated_cost": {"tx_cost_usd": 0.0},
+            }
+        ],
+        "constraints": {
+            "decision": {"min_net_gain_usd": 0, "max_breakeven_days": 30},
+            "agent_caps": {"max_position_pct": 10},
+        },
+    }
+    decision = {
+        "schema_version": "vaultsfyi.decision.v1",
+        "candidate_id": "partial_rebalance:0xSOURCE:0xTARGET:10.000000",
+        "action": "partial_rebalance",
+    }
+
+    result = validate_decision(decision, packet)
+
+    assert result["valid"] is False
+    assert "candidate exceeds target vault allocation cap" in result["violations"]
+
+
 def test_deploy_preference_bucket_caps_requested_percent(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     monkeypatch.setattr(CliContext, "agent", fake_agent)
@@ -482,6 +556,27 @@ def test_candidate_actions_do_not_deploy_idle_into_existing_positions():
     deploy_candidates = [c for c in candidates if c["type"] == "deploy_idle"]
     assert [c["target_vault_address"] for c in deploy_candidates] == ["0xNEW"]
     assert deploy_candidates[0]["amount_usd"] == 20.0
+
+
+def test_candidate_actions_respect_existing_target_balance_for_max_position_pct():
+    opportunities = [{"vault_address": "0xTARGET", "vault_name": "Target", "apy": 0.10}]
+    positions = [
+        {"vault_address": "0xSOURCE", "vault_name": "Source", "nickname": "src", "balance_usd": 50.0, "apy": 0.01},
+        {"vault_address": "0xTARGET", "vault_name": "Target", "nickname": "tgt", "balance_usd": 9.0, "apy": 0.02},
+    ]
+    idle = {"usdc_balance": 41.0}
+    cfg = {
+        "agent": {"max_position_pct": 10},
+        "risk": {},
+        "strategy": {"min_deposit_usd": 0.1},
+        "decision": {"min_apy_improvement": 0.01, "allow_partial_rebalance": True, "max_rebalance_pct": 50},
+    }
+
+    candidates = build_candidate_actions(FakeAgent(), cfg, opportunities, positions, idle)
+    rebalances = [c for c in candidates if c["type"] == "partial_rebalance"]
+
+    assert len(rebalances) == 1
+    assert rebalances[0]["amount_usd"] == 1.0
 
 
 def test_preference_bucket_caps_candidates_that_increase_bucket_exposure():
