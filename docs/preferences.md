@@ -146,6 +146,9 @@ Resolution order, from lowest to highest priority:
 5. selected preference overlay: `[preferences.blue-chip]` is copied into `strategy` because `--preference blue-chip` was passed, or because `agent.preference = "blue-chip"` is configured for `agent run`.
 6. explicit command flags: command-specific flags such as `--percent 10`, `--preference NAME`, `--dry-run`, `--yes`, or `--execute`.
 
+For `agent run NAME`, `agent.preference` must be set in that named profile.
+Global `agent.preference` is not inherited by named profile runs.
+
 Environment overrides are:
 
 ```bash

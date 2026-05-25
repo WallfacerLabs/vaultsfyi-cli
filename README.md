@@ -201,7 +201,7 @@ api_url = "https://api.vaults.fyi"
 [agent]
 name = "default"
 mode = "dry-run" # dry-run | paper | live
-# preference = "blue-chip" # default preference for `vaultsfyi agent run`
+# preference = "blue-chip" # set in agent profiles for `vaultsfyi agent run`
 # max_deploy_usd = 100
 # max_position_pct = 25 # cap deploy/rebalance target size as a percent of portfolio value
 
@@ -289,7 +289,10 @@ Config resolution, from lowest to highest priority:
 6. explicit command flags
 ```
 
-Later layers override earlier layers for the same key. Preferences are overlays selected with `--preference` or with `agent.preference` for `agent run`; they do not rewrite the config file.
+Later layers override earlier layers for the same key. Preferences are overlays
+selected with `--preference` or with `agent.preference` for `agent run`; they do
+not rewrite the config file. For named profile runs, set `agent.preference` in
+that profile because global `agent.preference` is not inherited by named agents.
 
 Supported environment overrides:
 
@@ -438,12 +441,15 @@ cp .env.example .env
 # edit .env and set VAULTS_API_KEY=...
 VAULTSFYI_RUN_E2E=1 pytest -m e2e
 VAULTSFYI_RUN_E2E_FULL=1 pytest -m e2e
+VAULTSFYI_RUN_E2E_FULL=1 pytest
 ```
 
-The full sweep covers no-funds API commands and throttles requests with
-`VAULTSFYI_E2E_RATE_LIMIT_SECONDS` to respect basic API rate limits. Funded or
-live-broadcast commands remain outside e2e automation unless explicitly tested
-with a dedicated funded wallet.
+The `-m e2e` commands intentionally select only tests marked `e2e`, so pytest
+will deselect the normal unit suite. Use `VAULTSFYI_RUN_E2E_FULL=1 pytest` to
+run the entire test suite plus the full live e2e sweep. The full sweep covers
+no-funds API commands and throttles requests with `VAULTSFYI_E2E_RATE_LIMIT_SECONDS`
+to respect basic API rate limits. Funded or live-broadcast commands remain
+outside e2e automation unless explicitly tested with a dedicated funded wallet.
 
 ## Notes
 

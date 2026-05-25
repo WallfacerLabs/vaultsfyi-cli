@@ -117,6 +117,7 @@ Validator checks:
 - source position exists
 - amount is valid
 - preference bucket capacity is respected
+- target vault allocation caps are respected
 - breakeven is within configured policy
 - expected net gain clears configured policy
 
@@ -127,11 +128,19 @@ When the selected preference defines `bucket_max_pct`, the packet also includes
 and tolerance-band status. Candidate generation caps `deploy_idle` and incoming
 rebalance amounts so they cannot add exposure above `bucket_max_pct`.
 
+Target allocation caps are enforced against the target's existing balance plus
+the proposed incoming amount. This applies to `agent.max_position_pct` and
+`risk.max_single_vault_usd`.
+
 ## Plan
 
 ```bash
 vaultsfyi plan-decision decision.json --packet packet.json -o json
 ```
+
+Planning builds transactions only from vaults.fyi transaction actions. If the
+API returns no usable actions for the selected deploy or redeem, planning fails
+instead of fabricating transaction data.
 
 This builds unsigned transaction payloads. It does not sign or broadcast.
 
@@ -153,7 +162,8 @@ vaultsfyi agent run NAME --execute --yes
 ```
 
 The profile should set `agent.preference` when autonomous runs must use the same
-preference filters and bucket limits as packet/deploy flows.
+preference filters and bucket limits as packet/deploy flows. Global
+`agent.preference` is not inherited by named profile runs.
 
 ## Decision config
 

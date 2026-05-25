@@ -19,6 +19,7 @@ The validator rejects:
 - targets outside eligible vaults
 - sources outside current positions
 - invalid amounts
+- target vault allocation caps
 - breakeven above policy
 - net gain below policy
 - malformed schema
@@ -34,7 +35,9 @@ They cannot provide:
 - arbitrary spender addresses
 - arbitrary call data
 
-The CLI builds all transactions from vaults.fyi transaction endpoints.
+The CLI builds all transactions from vaults.fyi transaction endpoints. If an
+endpoint returns no usable transaction actions, the CLI fails closed instead of
+constructing fallback call data.
 
 ## Confirmation
 
@@ -112,6 +115,7 @@ enforce that separately from chain-broadcast approval.
 
 - Cost estimates use configured gas assumptions and ETH/USD price unless richer data is supplied.
 - Withdrawability, vault age, and incentive-heavy APY filters depend on vaults.fyi response fields; explicit filters fail closed when required data is absent.
-- Withdrawal fees/cooldowns are included only when data is available.
+- Withdrawal fees and protocol cooldowns are not yet modeled in decision costs
+  unless future vault data or transaction endpoint support exposes them.
 - `slippage_bps` and `cooldown_after_tx` are configuration placeholders for transaction endpoint support and external scheduler policy.
 - The decision system is conservative by design. Invalid or marginal decisions should become `hold`.

@@ -69,6 +69,9 @@ When `agent.preference` is set, the run applies that preference's vault filters,
 bucket max, and tolerance band. Use `agent run NAME --preference OTHER` to
 override the profile default for one run.
 
+Named profiles must set their own `agent.preference`; a global default is not
+inherited by profile runs.
+
 Live execution is explicit:
 
 ```bash

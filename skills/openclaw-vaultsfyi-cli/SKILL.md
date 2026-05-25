@@ -57,6 +57,8 @@ Before live operation, verify:
 - Wallet address was shown to the user and funded intentionally.
 - `vaultsfyi status`, `idle`, and `positions` work for the profile.
 - `vaultsfyi preference show PREF` matches the user's stated boundaries.
-- `vaultsfyi --agent NAME config show --all` shows `agent.preference = "PREF"` and reviewed caps.
+- `vaultsfyi --agent NAME config show --all` shows `agent.preference = "PREF"` and reviewed caps; profile runs do not inherit a global
+  `agent.preference`.
 - `vaultsfyi agent run NAME --dry-run` succeeds.
+- Missing or empty transaction actions are treated as blockers, not as a reason to improvise transaction data.
 - The user approved either a single live command or the exact profile/schedule allowed to run unattended.
