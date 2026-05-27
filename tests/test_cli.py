@@ -6,7 +6,7 @@ from typer.testing import CliRunner
 from agent.cli import config as config_mod
 from agent.cli.main import app
 from agent.cli.context import CliContext
-from agent.decision import apply_preference, build_candidate_actions, plan_decision, preference_bucket_state, validate_decision
+from agent.decision import apply_preference, build_candidate_actions, build_decision_packet, plan_decision, preference_bucket_state, validate_decision
 
 runner = CliRunner()
 
@@ -670,6 +670,105 @@ def test_preference_overlay_supports_new_vault_filter_fields():
     assert criteria["max_deposit_fee"] == 0.005
     assert criteria["min_remaining_capacity"] == 100_000
     assert criteria["only_rewards_supported"] is True
+
+
+def test_preference_overlay_normalizes_saved_string_values():
+    cfg = config_mod.DEFAULT_CONFIG | {
+        "preferences": {
+            "core-high-score": {
+                "min_apy": "0.01",
+                "max_apy": "0.20",
+                "min_tvl": "1000000",
+                "max_tvl": "50000000",
+                "min_vault_score": "8",
+                "max_performance_fee": "0.20",
+                "max_management_fee": "0.02",
+                "max_withdrawal_fee": "0.01",
+                "max_deposit_fee": "0.005",
+                "min_remaining_capacity": "100000",
+                "bucket_max_pct": "10",
+                "bucket_tolerance_pct": "5",
+                "max_deploy_usd": "25",
+                "max_position_pct": "15",
+                "only_instant_deposit": "true",
+                "only_instant_redeem": "false",
+                "only_rewards_supported": "true",
+                "only_transactional": "true",
+                "only_app_featured": "false",
+                "allow_corrupted": "false",
+                "allow_vaults_with_warnings": "false",
+                "allowed_assets": "USDC,WETH",
+                "allowed_networks": "base,eip155:1",
+                "allowed_protocols": "morpho",
+                "blocked_protocols": "aave,compound",
+                "tags": "stablecoin,blue-chip",
+                "curators": "steakhouse",
+                "vault_whitelist": "0xabc,0xdef",
+            }
+        }
+    }
+
+    resolved = apply_preference(cfg, "core-high-score")
+    criteria = config_mod.agent_config(resolved)["criteria"]
+    preference = resolved["active_preference"]["filters"]
+
+    assert criteria["min_apy"] == 0.01
+    assert isinstance(criteria["min_apy"], float)
+    assert criteria["min_tvl"] == 1_000_000
+    assert criteria["only_transactional"] is True
+    assert criteria["only_app_featured"] is False
+    assert criteria["allowed_assets"] == ["USDC", "WETH"]
+    assert criteria["allowed_networks"] == ["base", "eip155:1"]
+    assert criteria["disallowed_protocols"] == ["aave", "compound"]
+    assert criteria["only_instant_deposit"] is True
+    assert criteria["only_instant_redeem"] is False
+    assert criteria["only_rewards_supported"] is True
+    assert preference["bucket_max_pct"] == 10
+    assert preference["bucket_tolerance_pct"] == 5
+    assert resolved["agent"]["max_deploy_usd"] == 25
+    assert resolved["agent"]["max_position_pct"] == 15
+
+
+def test_cli_preference_paths_apply_numeric_min_apy(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    config_mod.write_config(
+        {
+            "preferences": {
+                "core-high-score": {
+                    "min_apy": "0.01",
+                    "min_tvl": "1000000",
+                    "only_transactional": "true",
+                }
+            }
+        }
+    )
+    captured_min_apy = []
+
+    def capture_agent(self):
+        criteria = config_mod.agent_config(self.cfg)["criteria"]
+        captured_min_apy.append(criteria["min_apy"])
+        return FakeAgent()
+
+    monkeypatch.setattr(CliContext, "agent", capture_agent)
+
+    base_ctx = CliContext(
+        output=type("Output", (), {"value": "json"})(),
+        config_path=None,
+        agent_name=None,
+        cfg=config_mod.load_config(),
+    )
+
+    opportunities_ctx = base_ctx.with_preference("core-high-score")
+    opportunities_ctx.agent().get_opportunities()
+
+    packet_ctx = base_ctx.with_preference("core-high-score")
+    build_decision_packet(packet_ctx.agent(), packet_ctx.cfg, "core-high-score")
+
+    deploy_ctx = base_ctx.with_preference("core-high-score")
+    deploy_ctx.agent().prepare_deploy(100)
+
+    assert captured_min_apy == [0.01, 0.01, 0.01]
+    assert all(isinstance(value, float) for value in captured_min_apy)
 
 
 def test_build_best_deposit_params_casts_numeric_fields():

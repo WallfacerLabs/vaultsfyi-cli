@@ -12,6 +12,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from agent.cli.config import normalize_preference
+
 PACKET_SCHEMA = "vaultsfyi.decision-packet.v1"
 DECISION_SCHEMA = "vaultsfyi.decision.v1"
 
@@ -65,6 +67,11 @@ PREFERENCE_KEYS = {
     "max_deposit_fee",
     "min_remaining_capacity",
     "only_rewards_supported",
+}
+
+PREFERENCE_AGENT_KEYS = {
+    "max_deploy_usd",
+    "max_position_pct",
 }
 
 PREFERENCE_KEY_ALIASES = {
@@ -134,13 +141,15 @@ def apply_preference(cfg: dict[str, Any], preference_name: str | None) -> dict[s
     preferences = resolved.get("preferences", {})
     if preference_name not in preferences:
         raise ValueError(f"preference '{preference_name}' does not exist")
-    preference = preferences[preference_name]
+    preference = normalize_preference(preferences[preference_name])
     for key, value in preference.items():
         if key in PREFERENCE_KEYS:
             target_key = PREFERENCE_KEY_ALIASES.get(key, key)
             if target_key != key and preference.get(target_key) not in (None, "", []):
                 continue
             resolved.setdefault("strategy", {})[target_key] = value
+        elif key in PREFERENCE_AGENT_KEYS:
+            resolved.setdefault("agent", {})[key] = value
     resolved.setdefault("active_preference", {})["name"] = preference_name
     resolved["active_preference"]["filters"] = preference
     return resolved

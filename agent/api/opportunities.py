@@ -61,8 +61,12 @@ def _normalized_set(value) -> set[str]:
 def _query_value(value):
     if value is None or value == "":
         return None
-    if isinstance(value, bool):
-        return 'true' if value else 'false'
+    if isinstance(value, str):
+        lower = value.strip().lower()
+        if lower in {'true', 'yes', '1'}:
+            return True
+        if lower in {'false', 'no', '0'}:
+            return False
     return value
 
 

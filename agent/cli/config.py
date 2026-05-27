@@ -117,6 +117,47 @@ ENV_MAP = {
     ("vaults", "api_url"): "VAULTS_API_URL",
 }
 
+PREFERENCE_NUMERIC_FIELDS = {
+    "min_apy",
+    "max_apy",
+    "min_tvl",
+    "max_tvl",
+    "min_vault_score",
+    "max_performance_fee",
+    "max_management_fee",
+    "max_withdrawal_fee",
+    "max_deposit_fee",
+    "min_remaining_capacity",
+    "bucket_max_pct",
+    "bucket_tolerance_pct",
+    "max_deploy_usd",
+    "max_position_pct",
+}
+
+PREFERENCE_BOOL_FIELDS = {
+    "only_instant_deposit",
+    "only_instant_redeem",
+    "only_rewards_supported",
+    "only_transactional",
+    "only_app_featured",
+    "allow_corrupted",
+    "allow_vaults_with_warnings",
+}
+
+PREFERENCE_LIST_FIELDS = {
+    "allowed_assets",
+    "disallowed_assets",
+    "allowed_networks",
+    "disallowed_networks",
+    "allowed_protocols",
+    "disallowed_protocols",
+    "blocked_protocols",
+    "tags",
+    "curators",
+    "allowed_curators",
+    "vault_whitelist",
+}
+
 
 def config_dir() -> Path:
     base = os.getenv("XDG_CONFIG_HOME")
@@ -454,6 +495,60 @@ def parse_config_value(value: str) -> Any:
         return float(value)
     except ValueError:
         return value
+
+
+def _coerce_number(value: Any, key: str) -> int | float:
+    if isinstance(value, bool):
+        raise ValueError(f"preference {key} must be a number")
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, str):
+        parsed = parse_config_value(value.strip())
+        if isinstance(parsed, bool) or not isinstance(parsed, (int, float)):
+            raise ValueError(f"preference {key} must be a number")
+        return parsed
+    raise ValueError(f"preference {key} must be a number")
+
+
+def _coerce_bool(value: Any, key: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lower = value.strip().lower()
+        if lower in {"true", "yes", "1"}:
+            return True
+        if lower in {"false", "no", "0"}:
+            return False
+    raise ValueError(f"preference {key} must be a boolean")
+
+
+def _coerce_list(value: Any) -> list[Any]:
+    if value is None or value == "":
+        return []
+    if isinstance(value, list):
+        values = value
+    elif isinstance(value, (tuple, set)):
+        values = list(value)
+    elif isinstance(value, str):
+        values = value.split(",")
+    else:
+        values = [value]
+    return [item.strip() if isinstance(item, str) else item for item in values if item is not None and item != ""]
+
+
+def normalize_preference(preference: dict[str, Any]) -> dict[str, Any]:
+    """Coerce saved preference values according to the preference schema."""
+    normalized: dict[str, Any] = {}
+    for key, value in preference.items():
+        if key in PREFERENCE_NUMERIC_FIELDS:
+            normalized[key] = _coerce_number(value, key)
+        elif key in PREFERENCE_BOOL_FIELDS:
+            normalized[key] = _coerce_bool(value, key)
+        elif key in PREFERENCE_LIST_FIELDS:
+            normalized[key] = _coerce_list(value)
+        else:
+            normalized[key] = value
+    return normalized
 
 
 def sanitize_config(cfg: dict[str, Any]) -> dict[str, Any]:
