@@ -643,6 +643,35 @@ def test_preference_init_does_not_write_defaults(monkeypatch, tmp_path):
     assert cfg["preferences"]["clean"] == {}
 
 
+def test_preference_overlay_supports_new_vault_filter_fields():
+    cfg = config_mod.DEFAULT_CONFIG | {
+        "preferences": {
+            "strict": {
+                "only_instant_deposit": True,
+                "only_instant_redeem": True,
+                "max_performance_fee": 0.20,
+                "max_management_fee": 0.02,
+                "max_withdrawal_fee": 0.01,
+                "max_deposit_fee": 0.005,
+                "min_remaining_capacity": 100_000,
+                "only_rewards_supported": True,
+            }
+        }
+    }
+
+    resolved = apply_preference(cfg, "strict")
+    criteria = config_mod.agent_config(resolved)["criteria"]
+
+    assert criteria["only_instant_deposit"] is True
+    assert criteria["only_instant_redeem"] is True
+    assert criteria["max_performance_fee"] == 0.20
+    assert criteria["max_management_fee"] == 0.02
+    assert criteria["max_withdrawal_fee"] == 0.01
+    assert criteria["max_deposit_fee"] == 0.005
+    assert criteria["min_remaining_capacity"] == 100_000
+    assert criteria["only_rewards_supported"] is True
+
+
 def test_build_best_deposit_params_casts_numeric_fields():
     from agent.api.opportunities import _build_best_deposit_params
 

@@ -67,6 +67,14 @@ curators = []
 # per_page = 50
 # bucket_max_pct = 10 # no new deploy/rebalance-in above 10% portfolio exposure
 # bucket_tolerance_pct = 5 # drift band; status becomes over_tolerance above 15%
+# only_instant_deposit = true # require instant deposit steps
+# only_instant_redeem = true # require instant withdrawal steps
+# max_performance_fee = 0.20 # exclude vaults with performance fee above 20%
+# max_management_fee = 0.02 # exclude vaults with management fee above 2%
+# max_withdrawal_fee = 0.01 # exclude vaults with withdrawal fee above 1%
+# max_deposit_fee = 0.005 # exclude vaults with deposit fee above 0.5%
+# min_remaining_capacity = 100000 # exclude vaults with remaining capacity below 100k USD
+# only_rewards_supported = true # require vaults that support rewards
 ```
 
 ## Semantics
@@ -95,6 +103,14 @@ curators = []
 - `vault_whitelist`: if non-empty, only these vault addresses are allowed
 - `bucket_max_pct`: optional maximum active allocation for this preference bucket as a percent of total portfolio value. New deploys and rebalances into the preference are capped at the remaining room below this value.
 - `bucket_tolerance_pct`: optional absolute percentage-point drift band above `bucket_max_pct`. For example, `bucket_max_pct = 10` and `bucket_tolerance_pct = 5` allows market growth to 15% before the packet reports `over_tolerance`. It does not allow new capital above 10%.
+- `only_instant_deposit`: when true, exclude vaults whose `depositStepsType` is not `"instant"`
+- `only_instant_redeem`: when true, exclude vaults whose `redeemStepsType` is not `"instant"`
+- `max_performance_fee`: exclude vaults with a performance fee above this decimal threshold; vaults missing the field are kept
+- `max_management_fee`: exclude vaults with a management fee above this decimal threshold; vaults missing the field are kept
+- `max_withdrawal_fee`: exclude vaults with a withdrawal fee above this decimal threshold; vaults missing the field are kept
+- `max_deposit_fee`: exclude vaults with a deposit fee above this decimal threshold; vaults missing the field are kept
+- `min_remaining_capacity`: exclude vaults with remaining capacity below this USD value; vaults missing the field are kept
+- `only_rewards_supported`: when true, exclude vaults where `rewardsSupported` is not true
 
 Most filter names are snake_case versions of the vaults.fyi `/v2/detailed-vaults` filters. The CLI sends the filters supported by the active vaults.fyi endpoint and applies the remaining detailed-vault filters locally to the returned opportunities. Bucket fields are local CLI policy and are not sent as vaults.fyi API filters.
 

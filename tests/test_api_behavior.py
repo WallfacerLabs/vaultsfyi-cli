@@ -289,6 +289,122 @@ def test_opportunities_apply_detailed_only_filters_sort_and_page_locally():
     assert opportunities[0]["apy_intervals"]["30day"] == 0.07
 
 
+def _vault_with_extras(**overrides):
+    """Return a minimal vault dict with all new API fields, merged with overrides."""
+    base = {
+        "address": "0xbase",
+        "name": "Base Vault",
+        "network": {"name": "base"},
+        "apy": {"total": 0.05},
+        "tvl": {"usd": 2_000_000},
+        "isTransactional": True,
+        "depositStepsType": "instant",
+        "redeemStepsType": "instant",
+        "performanceFee": 0.10,
+        "managementFee": 0.01,
+        "withdrawalFee": 0.0,
+        "depositFee": 0.0,
+        "remainingCapacity": 500_000,
+        "maxCapacity": 1_000_000,
+        "rewardsSupported": True,
+    }
+    base.update(overrides)
+    return base
+
+
+def _response_with(*vaults):
+    return {"userBalances": [{"asset": {"symbol": "USDC"}, "depositOptions": list(vaults)}]}
+
+
+_BASE_CRITERIA = {"min_apy": 0.01, "min_tvl": 1_000_000, "only_transactional": True}
+
+
+def test_opportunities_output_includes_new_fields():
+    vault = _vault_with_extras()
+    response = _response_with(vault)
+    results = OpportunityAPI(FakeClient(response)).get_best_deposit_options("0xwallet", _BASE_CRITERIA)
+
+    assert len(results) == 1
+    r = results[0]
+    assert r["deposit_steps_type"] == "instant"
+    assert r["redeem_steps_type"] == "instant"
+    assert r["performance_fee"] == 0.10
+    assert r["management_fee"] == 0.01
+    assert r["withdrawal_fee"] == 0.0
+    assert r["deposit_fee"] == 0.0
+    assert r["remaining_capacity"] == 500_000
+    assert r["max_capacity"] == 1_000_000
+    assert r["rewards_supported"] is True
+
+
+def test_only_instant_deposit_excludes_non_instant():
+    good = _vault_with_extras(address="0xgood", depositStepsType="instant")
+    bad = _vault_with_extras(address="0xbad", depositStepsType="multi-step")
+    results = OpportunityAPI(FakeClient(_response_with(good, bad))).get_best_deposit_options(
+        "0xwallet", {**_BASE_CRITERIA, "only_instant_deposit": True},
+    )
+    assert [r["vault_address"] for r in results] == ["0xgood"]
+
+
+def test_only_instant_redeem_excludes_non_instant():
+    good = _vault_with_extras(address="0xgood", redeemStepsType="instant")
+    bad = _vault_with_extras(address="0xbad", redeemStepsType="multi-step")
+    results = OpportunityAPI(FakeClient(_response_with(good, bad))).get_best_deposit_options(
+        "0xwallet", {**_BASE_CRITERIA, "only_instant_redeem": True},
+    )
+    assert [r["vault_address"] for r in results] == ["0xgood"]
+
+
+def test_max_fee_filters_exclude_above_threshold():
+    low = _vault_with_extras(address="0xlow", performanceFee=0.05, managementFee=0.005, withdrawalFee=0.0, depositFee=0.0)
+    high = _vault_with_extras(address="0xhigh", performanceFee=0.30, managementFee=0.05, withdrawalFee=0.02, depositFee=0.01)
+    criteria = {
+        **_BASE_CRITERIA,
+        "max_performance_fee": 0.20,
+        "max_management_fee": 0.02,
+        "max_withdrawal_fee": 0.01,
+        "max_deposit_fee": 0.005,
+    }
+    results = OpportunityAPI(FakeClient(_response_with(low, high))).get_best_deposit_options("0xwallet", criteria)
+    assert [r["vault_address"] for r in results] == ["0xlow"]
+
+
+def test_fee_filter_passes_when_field_missing():
+    """Vaults missing a fee field are NOT excluded (conservative)."""
+    vault = _vault_with_extras(address="0xnofee")
+    del vault["performanceFee"]
+    criteria = {**_BASE_CRITERIA, "max_performance_fee": 0.10}
+    results = OpportunityAPI(FakeClient(_response_with(vault))).get_best_deposit_options("0xwallet", criteria)
+    assert len(results) == 1
+
+
+def test_min_remaining_capacity_filters():
+    big = _vault_with_extras(address="0xbig", remainingCapacity=200_000)
+    small = _vault_with_extras(address="0xsmall", remainingCapacity=1_000)
+    criteria = {**_BASE_CRITERIA, "min_remaining_capacity": 50_000}
+    results = OpportunityAPI(FakeClient(_response_with(big, small))).get_best_deposit_options("0xwallet", criteria)
+    assert [r["vault_address"] for r in results] == ["0xbig"]
+
+
+def test_remaining_capacity_passes_when_field_missing():
+    """Vaults missing remainingCapacity are NOT excluded (conservative)."""
+    vault = _vault_with_extras(address="0xnocap")
+    del vault["remainingCapacity"]
+    criteria = {**_BASE_CRITERIA, "min_remaining_capacity": 50_000}
+    results = OpportunityAPI(FakeClient(_response_with(vault))).get_best_deposit_options("0xwallet", criteria)
+    assert len(results) == 1
+
+
+def test_only_rewards_supported_excludes_unsupported():
+    good = _vault_with_extras(address="0xgood", rewardsSupported=True)
+    bad = _vault_with_extras(address="0xbad", rewardsSupported=False)
+    missing = _vault_with_extras(address="0xmissing")
+    del missing["rewardsSupported"]
+    criteria = {**_BASE_CRITERIA, "only_rewards_supported": True}
+    results = OpportunityAPI(FakeClient(_response_with(good, bad, missing))).get_best_deposit_options("0xwallet", criteria)
+    assert [r["vault_address"] for r in results] == ["0xgood"]
+
+
 def test_redeem_transaction_uses_only_default_action():
     response = {
         "actions": [

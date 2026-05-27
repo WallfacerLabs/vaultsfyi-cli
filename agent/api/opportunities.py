@@ -318,6 +318,48 @@ class OpportunityAPI:
                     if vault_age_days is None or vault_age_days < float(min_vault_age_days):
                         continue
 
+                # Deposit/redeem steps type filters (boolean, strict)
+                if _bool_or_none(criteria.get('only_instant_deposit')) is True:
+                    if vault.get('depositStepsType') != 'instant':
+                        continue
+                if _bool_or_none(criteria.get('only_instant_redeem')) is True:
+                    if vault.get('redeemStepsType') != 'instant':
+                        continue
+
+                # Fee threshold filters (conservative: missing field passes)
+                max_performance_fee = _float_or_none(criteria.get('max_performance_fee'))
+                if max_performance_fee is not None:
+                    perf_fee = _float_or_none(vault.get('performanceFee'))
+                    if perf_fee is not None and perf_fee > max_performance_fee:
+                        continue
+                max_management_fee = _float_or_none(criteria.get('max_management_fee'))
+                if max_management_fee is not None:
+                    mgmt_fee = _float_or_none(vault.get('managementFee'))
+                    if mgmt_fee is not None and mgmt_fee > max_management_fee:
+                        continue
+                max_withdrawal_fee = _float_or_none(criteria.get('max_withdrawal_fee'))
+                if max_withdrawal_fee is not None:
+                    wd_fee = _float_or_none(vault.get('withdrawalFee'))
+                    if wd_fee is not None and wd_fee > max_withdrawal_fee:
+                        continue
+                max_deposit_fee = _float_or_none(criteria.get('max_deposit_fee'))
+                if max_deposit_fee is not None:
+                    dep_fee = _float_or_none(vault.get('depositFee'))
+                    if dep_fee is not None and dep_fee > max_deposit_fee:
+                        continue
+
+                # Remaining capacity filter (conservative: missing field passes)
+                min_remaining_capacity = _float_or_none(criteria.get('min_remaining_capacity'))
+                if min_remaining_capacity is not None:
+                    remaining_cap = _float_or_none(vault.get('remainingCapacity'))
+                    if remaining_cap is not None and remaining_cap < min_remaining_capacity:
+                        continue
+
+                # Rewards supported filter (boolean, strict)
+                if _bool_or_none(criteria.get('only_rewards_supported')) is True:
+                    if vault.get('rewardsSupported') is not True:
+                        continue
+
                 protocol = vault.get('protocol', {}) or {}
                 curator = vault.get('curator', {}) or {}
                 protocol_name = (protocol.get('name') or vault.get('protocolName') or '').lower()
@@ -368,6 +410,15 @@ class OpportunityAPI:
                     'asset': asset_symbol,
                     'protocol': protocol.get('name') or vault.get('protocolName'),
                     'curator': curator.get('name') or vault.get('curatorName'),
+                    'deposit_steps_type': vault.get('depositStepsType'),
+                    'redeem_steps_type': vault.get('redeemStepsType'),
+                    'performance_fee': _float_or_none(vault.get('performanceFee')),
+                    'management_fee': _float_or_none(vault.get('managementFee')),
+                    'withdrawal_fee': _float_or_none(vault.get('withdrawalFee')),
+                    'deposit_fee': _float_or_none(vault.get('depositFee')),
+                    'remaining_capacity': _float_or_none(vault.get('remainingCapacity')),
+                    'max_capacity': _float_or_none(vault.get('maxCapacity')),
+                    'rewards_supported': vault.get('rewardsSupported'),
                 })
 
         sort_by = criteria.get('sort_by')

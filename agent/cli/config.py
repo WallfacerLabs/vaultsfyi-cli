@@ -73,6 +73,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "require_withdrawable": False,
         "min_vault_age_days": None,
         "allow_incentive_heavy_yield": True,
+        "only_instant_deposit": None,
+        "only_instant_redeem": None,
+        "max_performance_fee": None,
+        "max_management_fee": None,
+        "max_withdrawal_fee": None,
+        "max_deposit_fee": None,
+        "min_remaining_capacity": None,
+        "only_rewards_supported": None,
     },
     "execution": {
         "deploy_percent": 10.0,
@@ -271,6 +279,14 @@ def list_preferences(cfg: dict[str, Any]) -> list[dict[str, Any]]:
             "curators": pref.get("curators") or pref.get("allowed_curators"),
             "bucket_max_pct": preference_value(pref, "bucket_max_pct", "max_portfolio_pct"),
             "bucket_tolerance_pct": preference_value(pref, "bucket_tolerance_pct", "tolerance_pct"),
+            "only_instant_deposit": pref.get("only_instant_deposit"),
+            "only_instant_redeem": pref.get("only_instant_redeem"),
+            "max_performance_fee": pref.get("max_performance_fee"),
+            "max_management_fee": pref.get("max_management_fee"),
+            "max_withdrawal_fee": pref.get("max_withdrawal_fee"),
+            "max_deposit_fee": pref.get("max_deposit_fee"),
+            "min_remaining_capacity": pref.get("min_remaining_capacity"),
+            "only_rewards_supported": pref.get("only_rewards_supported"),
         }
         for name, pref in sorted(cfg.get("preferences", {}).items())
     ]
@@ -341,6 +357,14 @@ def agent_config(cfg: dict[str, Any]) -> dict[str, Any]:
         "require_withdrawable": bool(risk.get("require_withdrawable", False)),
         "min_vault_age_days": risk.get("min_vault_age_days"),
         "allow_incentive_heavy_yield": bool(risk.get("allow_incentive_heavy_yield", True)),
+        "only_instant_deposit": strategy.get("only_instant_deposit", risk.get("only_instant_deposit")),
+        "only_instant_redeem": strategy.get("only_instant_redeem", risk.get("only_instant_redeem")),
+        "max_performance_fee": strategy.get("max_performance_fee", risk.get("max_performance_fee")),
+        "max_management_fee": strategy.get("max_management_fee", risk.get("max_management_fee")),
+        "max_withdrawal_fee": strategy.get("max_withdrawal_fee", risk.get("max_withdrawal_fee")),
+        "max_deposit_fee": strategy.get("max_deposit_fee", risk.get("max_deposit_fee")),
+        "min_remaining_capacity": strategy.get("min_remaining_capacity", risk.get("min_remaining_capacity")),
+        "only_rewards_supported": strategy.get("only_rewards_supported", risk.get("only_rewards_supported")),
     }
     if strategy.get("max_apy") is not None:
         criteria["max_apy"] = float(strategy["max_apy"])

@@ -57,6 +57,14 @@ PREFERENCE_KEYS = {
     "vault_whitelist",
     "blocked_protocols",
     "allowed_curators",
+    "only_instant_deposit",
+    "only_instant_redeem",
+    "max_performance_fee",
+    "max_management_fee",
+    "max_withdrawal_fee",
+    "max_deposit_fee",
+    "min_remaining_capacity",
+    "only_rewards_supported",
 }
 
 PREFERENCE_KEY_ALIASES = {
