@@ -20,8 +20,6 @@ BEST_DEPOSIT_QUERY_FIELDS = {
     'disallowed_assets': 'disallowedAssets',
     'allowed_protocols': 'allowedProtocols',
     'disallowed_protocols': 'disallowedProtocols',
-    'min_tvl': 'minTvl',
-    'min_vault_score': 'minVaultScore',
     'only_transactional': 'onlyTransactional',
     'only_app_featured': 'onlyAppFeatured',
     'allow_corrupted': 'allowCorrupted',
@@ -29,7 +27,6 @@ BEST_DEPOSIT_QUERY_FIELDS = {
     'allowed_networks': 'allowedNetworks',
     'disallowed_networks': 'disallowedNetworks',
     'apy_interval': 'apyInterval',
-    'min_apy': 'minApy',
 }
 
 def _float_or_none(value) -> float | None:

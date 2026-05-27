@@ -843,7 +843,7 @@ def test_preference_backed_paths_serialize_boolean_query_params(monkeypatch, tmp
 
     assert len(captured_params) == 3
     for params in captured_params:
-        assert params["minApy"] == 0.01
+        assert "minApy" not in params
         assert params["onlyTransactional"] == "true"
         assert params["onlyAppFeatured"] == "false"
         assert params["allowCorrupted"] == "false"
@@ -852,7 +852,7 @@ def test_preference_backed_paths_serialize_boolean_query_params(monkeypatch, tmp
         assert False not in params.values()
 
 
-def test_build_best_deposit_params_casts_numeric_fields():
+def test_build_best_deposit_params_omits_locally_applied_numeric_fields():
     from agent.api.opportunities import _build_best_deposit_params
 
     criteria = {
@@ -864,12 +864,9 @@ def test_build_best_deposit_params_casts_numeric_fields():
         "allowed_networks": ["base"],
     }
     params = _build_best_deposit_params(criteria)
-    assert params["minApy"] == 0.05
-    assert isinstance(params["minApy"], float)
-    assert params["minTvl"] == 1_000_000
-    assert isinstance(params["minTvl"], int)
-    assert params["minVaultScore"] == 8
-    assert isinstance(params["minVaultScore"], int)
+    assert "minApy" not in params
+    assert "minTvl" not in params
+    assert "minVaultScore" not in params
     assert params["onlyTransactional"] == "true"
     assert params["allowCorrupted"] == "false"
 

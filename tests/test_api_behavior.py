@@ -157,8 +157,6 @@ def test_opportunities_send_supported_detailed_vault_filters_as_query_params():
         "disallowedAssets": ["DAI"],
         "allowedProtocols": ["morpho"],
         "disallowedProtocols": ["aave"],
-        "minTvl": 1_000_000,
-        "minVaultScore": 8,
         "onlyTransactional": "true",
         "onlyAppFeatured": "true",
         "allowCorrupted": "false",
@@ -166,7 +164,6 @@ def test_opportunities_send_supported_detailed_vault_filters_as_query_params():
         "allowedNetworks": ["base", "eip155:1"],
         "disallowedNetworks": ["polygon"],
         "apyInterval": "7day",
-        "minApy": 0.02,
     }
 
 
