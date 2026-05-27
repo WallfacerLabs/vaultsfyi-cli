@@ -123,7 +123,7 @@ def test_opportunities_apply_risk_filters_when_requested():
     assert [item["vault_address"] for item in opportunities] == ["0xsafe"]
 
 
-def test_opportunities_send_supported_detailed_vault_filters_as_query_params():
+def test_opportunities_fetch_detailed_vaults_with_preference_filters():
     client = FakeClient({"userBalances": []})
 
     OpportunityAPI(client).get_best_deposit_options(
@@ -152,11 +152,14 @@ def test_opportunities_send_supported_detailed_vault_filters_as_query_params():
         },
     )
 
+    assert client.last_endpoint == "/v2/detailed-vaults"
     assert client.last_params == {
         "allowedAssets": ["USDC", "WETH"],
         "disallowedAssets": ["DAI"],
         "allowedProtocols": ["morpho"],
         "disallowedProtocols": ["aave"],
+        "minTvl": 1_000_000,
+        "minVaultScore": 8,
         "onlyTransactional": "true",
         "onlyAppFeatured": "true",
         "allowCorrupted": "false",
@@ -164,6 +167,13 @@ def test_opportunities_send_supported_detailed_vault_filters_as_query_params():
         "allowedNetworks": ["base", "eip155:1"],
         "disallowedNetworks": ["polygon"],
         "apyInterval": "7day",
+        "minApy": 0.02,
+        "maxTvl": 5_000_000,
+        "maxApy": 0.20,
+        "tags": ["stablecoin"],
+        "curators": ["steakhouse"],
+        "sortBy": "apy7day",
+        "sortOrder": "desc",
     }
 
 
