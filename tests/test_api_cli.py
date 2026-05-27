@@ -37,7 +37,7 @@ API_COMMAND_CASES = [
         (
             ["api", "vaults", "list", "--page", "1", "--per-page", "2", "--network", "base", "--asset-symbol", "USDC", "--only-transactional"],
             "/v2/vaults",
-            {"page": 1, "perPage": 2, "network": "base", "assetSymbol": "USDC", "onlyTransactional": True},
+            {"page": 1, "perPage": 2, "network": "base", "assetSymbol": "USDC", "onlyTransactional": "true"},
         ),
         (["api", "assets", "list", "--network", "eip155:1"], "/v2/assets", {"network": "eip155:1"}),
         (["api", "tags"], "/v2/tags", {}),
@@ -48,6 +48,11 @@ API_COMMAND_CASES = [
             ["api", "detailed-vaults", "list", "--allowed-asset", "USDC,WETH", "--allowed-network", "base", "--min-tvl", "1000", "--sort-by", "tvl"],
             "/v2/detailed-vaults",
             {"allowedAssets": ["USDC", "WETH"], "allowedNetworks": ["base"], "minTvl": 1000, "sortBy": "tvl"},
+        ),
+        (
+            ["api", "detailed-vaults", "list", "--only-transactional", "--min-apy", "0.01"],
+            "/v2/detailed-vaults",
+            {"minApy": 0.01, "onlyTransactional": "true"},
         ),
         (["api", "detailed-vaults", "get", "eip155:1", VAULT_ID], "/v2/detailed-vaults/eip155%3A1/vault-1", {}),
         (["api", "detailed-vaults", "apy", "base", VAULT_ID], "/v2/detailed-vaults/base/vault-1/apy", {}),
@@ -77,7 +82,7 @@ API_COMMAND_CASES = [
         (
             ["api", "transactions", "payload", "deposit", USER, "base", VAULT_ID, "--asset-address", ASSET, "--amount", "100", "--simulate"],
             f"/v2/transactions/deposit/{USER}/base/vault-1",
-            {"assetAddress": ASSET, "amount": 100, "simulate": True},
+            {"assetAddress": ASSET, "amount": 100, "simulate": "true"},
         ),
         (["api", "transactions", "rewards", "context", USER], f"/v2/transactions/rewards/context/{USER}", {}),
         (

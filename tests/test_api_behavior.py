@@ -158,10 +158,10 @@ def test_opportunities_send_supported_detailed_vault_filters_as_query_params():
         "disallowedProtocols": ["aave"],
         "minTvl": 1_000_000,
         "minVaultScore": 8,
-        "onlyTransactional": True,
-        "onlyAppFeatured": True,
-        "allowCorrupted": False,
-        "allowVaultsWithWarnings": False,
+        "onlyTransactional": "true",
+        "onlyAppFeatured": "true",
+        "allowCorrupted": "false",
+        "allowVaultsWithWarnings": "false",
         "allowedNetworks": ["base", "eip155:1"],
         "disallowedNetworks": ["polygon"],
         "apyInterval": "7day",
@@ -474,6 +474,11 @@ def test_v2_query_params_normalize_without_losing_arrays_or_false_values():
         "minApy": 0.01,
         "minTvl": 1_000_000,
         "minVaultScore": 8,
-        "onlyTransactional": True,
-        "allowCorrupted": False,
+        "onlyTransactional": "true",
+        "allowCorrupted": "false",
     }
+
+
+def test_v2_query_params_reject_invalid_boolean_strings():
+    with pytest.raises(ValueError, match="onlyTransactional"):
+        query_params({"onlyTransactional": "maybe"})

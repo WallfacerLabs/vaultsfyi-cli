@@ -67,15 +67,15 @@ def query_scalar(key: str, value: Any) -> Any:
     return value
 
 
-def _bool_value(value: Any, key: str) -> bool:
+def _bool_value(value: Any, key: str) -> str:
     if isinstance(value, bool):
-        return value
+        return "true" if value else "false"
     if isinstance(value, str):
         lower = value.strip().lower()
         if lower in {"true", "yes", "1"}:
-            return True
+            return "true"
         if lower in {"false", "no", "0"}:
-            return False
+            return "false"
     raise ValueError(f"query parameter {key} must be boolean")
 
 

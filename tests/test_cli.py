@@ -771,6 +771,87 @@ def test_cli_preference_paths_apply_numeric_min_apy(monkeypatch, tmp_path):
     assert all(isinstance(value, float) for value in captured_min_apy)
 
 
+def test_preference_backed_paths_serialize_boolean_query_params(monkeypatch, tmp_path):
+    from agent.api.opportunities import OpportunityAPI
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    config_mod.write_config(
+        {
+            "preferences": {
+                "core-high-score": {
+                    "min_apy": "0.01",
+                    "only_transactional": True,
+                    "only_app_featured": False,
+                    "allow_corrupted": False,
+                    "allow_vaults_with_warnings": False,
+                }
+            }
+        }
+    )
+    captured_params = []
+
+    class RecordingClient:
+        def make_request(self, endpoint, params=None):
+            captured_params.append(params)
+            return {
+                "userBalances": [
+                    {
+                        "asset": {"symbol": "USDC"},
+                        "depositOptions": [
+                            {
+                                "address": "0xnewvault",
+                                "name": "New Vault",
+                                "network": {"name": "base"},
+                                "apy": {"total": 0.05},
+                                "tvl": {"usd": 2_000_000},
+                                "isTransactional": True,
+                            }
+                        ],
+                    }
+                ]
+            }
+
+    class RecordingAgent(FakeAgent):
+        def get_opportunities(self):
+            return OpportunityAPI(RecordingClient()).get_best_deposit_options(
+                "0xabc",
+                config_mod.agent_config(active_ctx.cfg)["criteria"],
+        )
+
+        def prepare_deploy(self, percentage):
+            return super().prepare_deploy(percentage)
+
+    def recording_agent(self):
+        return RecordingAgent()
+
+    monkeypatch.setattr(CliContext, "agent", recording_agent)
+    base_ctx = CliContext(
+        output=type("Output", (), {"value": "json"})(),
+        config_path=None,
+        agent_name=None,
+        cfg=config_mod.load_config(),
+    )
+
+    active_ctx = base_ctx.with_preference("core-high-score")
+    active_ctx.agent().get_opportunities()
+
+    active_ctx = base_ctx.with_preference("core-high-score")
+    build_decision_packet(active_ctx.agent(), active_ctx.cfg, "core-high-score")
+
+    active_ctx = base_ctx.with_preference("core-high-score")
+    active_ctx.agent().prepare_deploy(100)
+
+    assert len(captured_params) == 3
+    for params in captured_params:
+        assert params["minApy"] == 0.01
+        assert params["onlyTransactional"] == "true"
+        assert params["onlyAppFeatured"] == "false"
+        assert params["allowCorrupted"] == "false"
+        assert params["allowVaultsWithWarnings"] == "false"
+        assert True not in params.values()
+        assert False not in params.values()
+
+
 def test_build_best_deposit_params_casts_numeric_fields():
     from agent.api.opportunities import _build_best_deposit_params
 
@@ -779,6 +860,7 @@ def test_build_best_deposit_params_casts_numeric_fields():
         "min_tvl": "1000000",
         "min_vault_score": "8",
         "only_transactional": True,
+        "allow_corrupted": False,
         "allowed_networks": ["base"],
     }
     params = _build_best_deposit_params(criteria)
@@ -788,6 +870,8 @@ def test_build_best_deposit_params_casts_numeric_fields():
     assert isinstance(params["minTvl"], float)
     assert params["minVaultScore"] == 8.0
     assert isinstance(params["minVaultScore"], float)
+    assert params["onlyTransactional"] == "true"
+    assert params["allowCorrupted"] == "false"
 
 
 def test_plan_decision_rebalance_uses_projected_available_idle():

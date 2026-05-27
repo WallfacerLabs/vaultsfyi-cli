@@ -31,6 +31,12 @@ BEST_DEPOSIT_QUERY_FIELDS = {
 }
 
 NUMERIC_QUERY_FIELDS = {'min_tvl', 'min_vault_score', 'min_apy'}
+BOOL_QUERY_FIELDS = {
+    'only_transactional',
+    'only_app_featured',
+    'allow_corrupted',
+    'allow_vaults_with_warnings',
+}
 
 
 def _float_or_none(value) -> float | None:
@@ -58,16 +64,20 @@ def _normalized_set(value) -> set[str]:
     return {str(item).lower() for item in _list_value(value)}
 
 
-def _query_value(value):
+def _query_value(key, value):
     if value is None or value == "":
         return None
+    if key not in BOOL_QUERY_FIELDS:
+        return value
+    if isinstance(value, bool):
+        return 'true' if value else 'false'
     if isinstance(value, str):
         lower = value.strip().lower()
         if lower in {'true', 'yes', '1'}:
-            return True
+            return 'true'
         if lower in {'false', 'no', '0'}:
-            return False
-    return value
+            return 'false'
+    raise ValueError(f"query parameter {BEST_DEPOSIT_QUERY_FIELDS[key]} must be boolean")
 
 
 def _build_best_deposit_params(criteria: dict) -> dict:
@@ -77,7 +87,7 @@ def _build_best_deposit_params(criteria: dict) -> dict:
         if key in NUMERIC_QUERY_FIELDS:
             value = _float_or_none(raw)
         else:
-            value = _query_value(raw)
+            value = _query_value(key, raw)
         if value is not None and value != []:
             params[param_name] = value
     return params
