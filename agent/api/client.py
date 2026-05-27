@@ -17,6 +17,8 @@ from urllib.parse import urlencode
 import requests
 from dotenv import load_dotenv
 
+from agent.api.query import query_params
+
 
 class X402Client:
     """Client for making vaults.fyi API requests with OWS-backed payments."""
@@ -39,6 +41,7 @@ class X402Client:
            signing happens inside the OWS access layer, not inside this process.
         """
         url = f"{self.base_url}{endpoint}"
+        params = query_params(params or {})
 
         headers = {
             'x-402-auth': 'true',
@@ -59,6 +62,7 @@ class X402Client:
 
     def _make_paid_request(self, url: str, params: dict[str, Any] | None = None, timeout: int = 60) -> dict:
         """Use `ows pay request` for x402-paid requests."""
+        params = query_params(params or {})
         if not self.ows_cli:
             raise RuntimeError(
                 "This endpoint requires x402 payment, but the OWS CLI was not found. "

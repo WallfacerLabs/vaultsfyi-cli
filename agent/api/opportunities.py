@@ -6,6 +6,8 @@ Find best yield opportunities using API-side filtering
 from datetime import datetime, timezone
 from typing import List
 
+from agent.api.query import query_params
+
 
 APY_INTERVAL_ALIASES = {
     '1day': ('1day', '1d', 'day'),
@@ -29,15 +31,6 @@ BEST_DEPOSIT_QUERY_FIELDS = {
     'apy_interval': 'apyInterval',
     'min_apy': 'minApy',
 }
-
-NUMERIC_QUERY_FIELDS = {'min_tvl', 'min_vault_score', 'min_apy'}
-BOOL_QUERY_FIELDS = {
-    'only_transactional',
-    'only_app_featured',
-    'allow_corrupted',
-    'allow_vaults_with_warnings',
-}
-
 
 def _float_or_none(value) -> float | None:
     if value is None:
@@ -64,33 +57,13 @@ def _normalized_set(value) -> set[str]:
     return {str(item).lower() for item in _list_value(value)}
 
 
-def _query_value(key, value):
-    if value is None or value == "":
-        return None
-    if key not in BOOL_QUERY_FIELDS:
-        return value
-    if isinstance(value, bool):
-        return 'true' if value else 'false'
-    if isinstance(value, str):
-        lower = value.strip().lower()
-        if lower in {'true', 'yes', '1'}:
-            return 'true'
-        if lower in {'false', 'no', '0'}:
-            return 'false'
-    raise ValueError(f"query parameter {BEST_DEPOSIT_QUERY_FIELDS[key]} must be boolean")
-
-
 def _build_best_deposit_params(criteria: dict) -> dict:
     params = {}
     for key, param_name in BEST_DEPOSIT_QUERY_FIELDS.items():
         raw = criteria.get(key)
-        if key in NUMERIC_QUERY_FIELDS:
-            value = _float_or_none(raw)
-        else:
-            value = _query_value(key, raw)
-        if value is not None and value != []:
-            params[param_name] = value
-    return params
+        if raw is not None and raw != [] and raw != "":
+            params[param_name] = raw
+    return query_params(params)
 
 
 def _apy_breakdown(apy_data: dict, apy_interval: str) -> dict:

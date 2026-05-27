@@ -866,10 +866,10 @@ def test_build_best_deposit_params_casts_numeric_fields():
     params = _build_best_deposit_params(criteria)
     assert params["minApy"] == 0.05
     assert isinstance(params["minApy"], float)
-    assert params["minTvl"] == 1_000_000.0
-    assert isinstance(params["minTvl"], float)
-    assert params["minVaultScore"] == 8.0
-    assert isinstance(params["minVaultScore"], float)
+    assert params["minTvl"] == 1_000_000
+    assert isinstance(params["minTvl"], int)
+    assert params["minVaultScore"] == 8
+    assert isinstance(params["minVaultScore"], int)
     assert params["onlyTransactional"] == "true"
     assert params["allowCorrupted"] == "false"
 

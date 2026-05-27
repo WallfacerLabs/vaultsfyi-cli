@@ -1,5 +1,6 @@
 import pytest
 
+from agent.api.client import X402Client
 from agent.api.opportunities import OpportunityAPI
 from agent.api.transactions import TransactionAPI
 from agent.api.v2 import query_params
@@ -482,3 +483,74 @@ def test_v2_query_params_normalize_without_losing_arrays_or_false_values():
 def test_v2_query_params_reject_invalid_boolean_strings():
     with pytest.raises(ValueError, match="onlyTransactional"):
         query_params({"onlyTransactional": "maybe"})
+
+
+def test_x402_client_serializes_query_params_before_requests(monkeypatch):
+    captured = {}
+
+    class Response:
+        status_code = 200
+
+        def json(self):
+            return {"ok": True}
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        captured["url"] = url
+        captured["params"] = params
+        return Response()
+
+    monkeypatch.setattr("agent.api.client.requests.get", fake_get)
+
+    client = X402Client(base_url="https://api.example")
+    result = client.make_request(
+        "/v2/detailed-vaults",
+        params={"minApy": "0.01", "onlyTransactional": True, "allowCorrupted": False},
+    )
+
+    assert result == {"ok": True}
+    assert captured["params"] == {
+        "minApy": 0.01,
+        "onlyTransactional": "true",
+        "allowCorrupted": "false",
+    }
+
+
+def test_x402_paid_request_serializes_query_params_in_url(monkeypatch):
+    captured = {}
+
+    class Response:
+        status_code = 402
+        text = "payment required"
+
+        def json(self):
+            return {"error": "payment required"}
+
+    class Completed:
+        returncode = 0
+        stdout = '{"ok": true}'
+        stderr = ""
+
+    wallet = type("Wallet", (), {"name": "test-wallet", "passphrase": None})()
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        return Response()
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        return Completed()
+
+    monkeypatch.setattr("agent.api.client.requests.get", fake_get)
+    monkeypatch.setattr("agent.api.client.subprocess.run", fake_run)
+
+    client = X402Client(wallet=wallet, base_url="https://api.example")
+    client.ows_cli = "ows"
+    result = client.make_request(
+        "/v2/portfolio/best-deposit-options/0xabc",
+        params={"minApy": "0.01", "onlyTransactional": True},
+    )
+
+    assert result == {"ok": True}
+    paid_url = captured["command"][3]
+    assert "minApy=0.01" in paid_url
+    assert "onlyTransactional=true" in paid_url
+    assert "onlyTransactional=True" not in paid_url
