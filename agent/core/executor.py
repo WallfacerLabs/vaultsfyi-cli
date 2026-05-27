@@ -74,14 +74,20 @@ class TransactionExecutor:
 
     def _serialize_unsigned_transaction(self, transaction: dict) -> str:
         """Return OWS-compatible unsigned legacy transaction bytes as hex."""
-        unsigned = serializable_unsigned_transaction_from_dict(transaction)
+        unsigned = serializable_unsigned_transaction_from_dict(self._signable_transaction(transaction))
         return '0x' + rlp.encode(unsigned).hex()
+
+    @staticmethod
+    def _signable_transaction(transaction: dict) -> dict:
+        """Return the EVM transaction fields accepted by eth-account signing."""
+        return {key: value for key, value in transaction.items() if key != 'from'}
 
     def _sign_with_ows(self, transaction: dict) -> bytes:
         """Sign transaction via OWS and assemble a raw EVM transaction."""
         from ows import sign_transaction
 
-        unsigned = serializable_unsigned_transaction_from_dict(transaction)
+        signable = self._signable_transaction(transaction)
+        unsigned = serializable_unsigned_transaction_from_dict(signable)
         unsigned_hex = '0x' + rlp.encode(unsigned).hex()
 
         result = sign_transaction(
@@ -103,7 +109,7 @@ class TransactionExecutor:
         r = int(signature[:64], 16)
         s = int(signature[64:], 16)
         recovery_id = int(result.get('recovery_id') or 0)
-        v = recovery_id + 35 + (2 * int(transaction['chainId']))
+        v = recovery_id + 35 + (2 * int(signable['chainId']))
 
         return encode_transaction(unsigned, vrs=(v, r, s))
 

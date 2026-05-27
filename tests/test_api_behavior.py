@@ -3,6 +3,7 @@ import pytest
 from agent.api.client import X402Client
 from agent.api.opportunities import OpportunityAPI
 from agent.api.transactions import TransactionAPI
+from agent.core.executor import TransactionExecutor
 from agent.api.v2 import query_params
 from agent.strategy.criteria import VaultCriteria
 
@@ -447,6 +448,29 @@ def test_transaction_generation_rejects_malformed_actions():
 
     with pytest.raises(ValueError, match="without tx.to or tx.data"):
         api.generate_deposit_tx("0xwallet", "0xvault", 1.0, "0xasset")
+
+
+def test_signable_transaction_strips_from_field():
+    tx = {
+        "from": "0xsender",
+        "to": "0xvault",
+        "data": "0x",
+        "value": 0,
+        "nonce": 1,
+        "chainId": 8453,
+        "gas": 21000,
+        "gasPrice": 1,
+    }
+
+    assert TransactionExecutor._signable_transaction(tx) == {
+        "to": "0xvault",
+        "data": "0x",
+        "value": 0,
+        "nonce": 1,
+        "chainId": 8453,
+        "gas": 21000,
+        "gasPrice": 1,
+    }
 
 
 def test_vault_criteria_compares_addresses_case_insensitively():
