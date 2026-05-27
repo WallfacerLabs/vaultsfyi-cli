@@ -196,6 +196,71 @@ def _portfolio_filters(
     }
 
 
+def _float_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _apply_client_filters(
+    data: Any,
+    *,
+    only_instant_deposit: Optional[bool] = None,
+    only_instant_redeem: Optional[bool] = None,
+    max_performance_fee: Optional[float] = None,
+    max_management_fee: Optional[float] = None,
+    max_withdrawal_fee: Optional[float] = None,
+    max_deposit_fee: Optional[float] = None,
+    min_remaining_capacity: Optional[float] = None,
+    only_rewards_supported: Optional[bool] = None,
+) -> Any:
+    """Post-filter API response using client-side vault property filters."""
+    has_filters = any(v is not None for v in (
+        only_instant_deposit, only_instant_redeem,
+        max_performance_fee, max_management_fee,
+        max_withdrawal_fee, max_deposit_fee,
+        min_remaining_capacity, only_rewards_supported,
+    ))
+    if not has_filters:
+        return data
+    if not isinstance(data, dict) or not isinstance(data.get("data"), list):
+        return data
+
+    def keep(vault: dict) -> bool:
+        if only_instant_deposit and vault.get("depositStepsType") != "instant":
+            return False
+        if only_instant_redeem and vault.get("redeemStepsType") != "instant":
+            return False
+        if max_performance_fee is not None:
+            v = _float_or_none(vault.get("performanceFee"))
+            if v is not None and v > max_performance_fee:
+                return False
+        if max_management_fee is not None:
+            v = _float_or_none(vault.get("managementFee"))
+            if v is not None and v > max_management_fee:
+                return False
+        if max_withdrawal_fee is not None:
+            v = _float_or_none(vault.get("withdrawalFee"))
+            if v is not None and v > max_withdrawal_fee:
+                return False
+        if max_deposit_fee is not None:
+            v = _float_or_none(vault.get("depositFee"))
+            if v is not None and v > max_deposit_fee:
+                return False
+        if min_remaining_capacity is not None:
+            v = _float_or_none(vault.get("remainingCapacity"))
+            if v is not None and v < min_remaining_capacity:
+                return False
+        if only_rewards_supported and vault.get("rewardsSupported") is not True:
+            return False
+        return True
+
+    return {**data, "data": [v for v in data["data"] if keep(v)]}
+
+
 def _emit(data: Any, ctx: CliContext, rows: Optional[list[dict[str, Any]]] = None) -> None:
     if ctx.output == OutputFormat.json:
         echo_json(data)
@@ -388,6 +453,14 @@ def list_detailed_vaults(
     curators: Optional[list[str]] = typer.Option(None, "--curator", "--curators"),
     sort_order: Optional[str] = typer.Option(None, "--sort-order"),
     sort_by: Optional[str] = typer.Option(None, "--sort-by"),
+    only_instant_deposit: Optional[bool] = typer.Option(None, "--only-instant-deposit/--include-non-instant-deposit"),
+    only_instant_redeem: Optional[bool] = typer.Option(None, "--only-instant-redeem/--include-non-instant-redeem"),
+    max_performance_fee: Optional[float] = typer.Option(None, "--max-performance-fee"),
+    max_management_fee: Optional[float] = typer.Option(None, "--max-management-fee"),
+    max_withdrawal_fee: Optional[float] = typer.Option(None, "--max-withdrawal-fee"),
+    max_deposit_fee: Optional[float] = typer.Option(None, "--max-deposit-fee"),
+    min_remaining_capacity: Optional[float] = typer.Option(None, "--min-remaining-capacity"),
+    only_rewards_supported: Optional[bool] = typer.Option(None, "--only-rewards-supported/--include-non-rewards-supported"),
 ):
     """List detailed vaults with analytics and filters."""
 
@@ -416,6 +489,17 @@ def list_detailed_vaults(
             sort_by,
         )
         data = ctx.api_client().request("/v2/detailed-vaults", params=params)
+        data = _apply_client_filters(
+            data,
+            only_instant_deposit=only_instant_deposit,
+            only_instant_redeem=only_instant_redeem,
+            max_performance_fee=max_performance_fee,
+            max_management_fee=max_management_fee,
+            max_withdrawal_fee=max_withdrawal_fee,
+            max_deposit_fee=max_deposit_fee,
+            min_remaining_capacity=min_remaining_capacity,
+            only_rewards_supported=only_rewards_supported,
+        )
         _emit(data, ctx)
 
     _run(inner)
