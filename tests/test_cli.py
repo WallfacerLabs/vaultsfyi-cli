@@ -624,6 +624,44 @@ def test_preference_bucket_reports_tolerance_band_status():
     assert state["status"] == "over_tolerance"
 
 
+def test_new_preference_starts_empty():
+    pref = config_mod.new_preference()
+    assert pref == {}
+
+
+def test_preference_init_does_not_write_defaults(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    result = runner.invoke(app, ["-o", "json", "preference", "init", "clean"])
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["name"] == "clean"
+    assert "min_apy" not in data
+    assert "min_tvl" not in data
+    assert "only_transactional" not in data
+
+    cfg = config_mod.load_toml(config_mod.default_config_path())
+    assert cfg["preferences"]["clean"] == {}
+
+
+def test_build_best_deposit_params_casts_numeric_fields():
+    from agent.api.opportunities import _build_best_deposit_params
+
+    criteria = {
+        "min_apy": "0.05",
+        "min_tvl": "1000000",
+        "min_vault_score": "8",
+        "only_transactional": True,
+        "allowed_networks": ["base"],
+    }
+    params = _build_best_deposit_params(criteria)
+    assert params["minApy"] == 0.05
+    assert isinstance(params["minApy"], float)
+    assert params["minTvl"] == 1_000_000.0
+    assert isinstance(params["minTvl"], float)
+    assert params["minVaultScore"] == 8.0
+    assert isinstance(params["minVaultScore"], float)
+
+
 def test_plan_decision_rebalance_uses_projected_available_idle():
     packet = {
         "schema_version": "vaultsfyi.decision-packet.v1",

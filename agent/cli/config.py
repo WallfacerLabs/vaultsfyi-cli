@@ -246,14 +246,7 @@ def list_agent_profiles() -> list[dict[str, Any]]:
 
 
 def new_preference() -> dict[str, Any]:
-    return {
-        **deepcopy(DETAILED_VAULT_FILTER_DEFAULTS),
-        "vault_whitelist": [],
-        "blocked_protocols": [],
-        "allowed_curators": [],
-        "bucket_max_pct": None,
-        "bucket_tolerance_pct": None,
-    }
+    return {}
 
 
 def list_preferences(cfg: dict[str, Any]) -> list[dict[str, Any]]:

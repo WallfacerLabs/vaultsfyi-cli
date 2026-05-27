@@ -30,6 +30,8 @@ BEST_DEPOSIT_QUERY_FIELDS = {
     'min_apy': 'minApy',
 }
 
+NUMERIC_QUERY_FIELDS = {'min_tvl', 'min_vault_score', 'min_apy'}
+
 
 def _float_or_none(value) -> float | None:
     if value is None:
@@ -67,7 +69,11 @@ def _query_value(value):
 def _build_best_deposit_params(criteria: dict) -> dict:
     params = {}
     for key, param_name in BEST_DEPOSIT_QUERY_FIELDS.items():
-        value = _query_value(criteria.get(key))
+        raw = criteria.get(key)
+        if key in NUMERIC_QUERY_FIELDS:
+            value = _float_or_none(raw)
+        else:
+            value = _query_value(raw)
         if value is not None and value != []:
             params[param_name] = value
     return params
