@@ -464,16 +464,38 @@ def normalize_decision(decision: dict[str, Any]) -> dict[str, Any]:
     return decision
 
 
-def validate_decision(decision: dict[str, Any], packet: dict[str, Any]) -> dict[str, Any]:
-    decision = normalize_decision(decision)
-    violations: list[str] = []
-    if packet.get("schema_version") != PACKET_SCHEMA:
-        violations.append("invalid packet schema_version")
-    if decision.get("schema_version") != DECISION_SCHEMA:
-        violations.append("invalid decision schema_version")
+def _decision_items(decision: dict[str, Any]) -> list[dict[str, Any]]:
+    items = decision.get("actions")
+    if items is None:
+        items = decision.get("decisions")
+    if items is None:
+        return [decision]
+    if not isinstance(items, list):
+        return []
+    return [item for item in items if isinstance(item, dict)]
 
-    candidate_id = decision.get("candidate_id")
-    candidates = {c["id"]: c for c in packet.get("candidate_actions", [])}
+
+def _candidate_amount(candidate: dict[str, Any], item: dict[str, Any]) -> float:
+    raw_amount = item.get("amount_usd", item.get("amountUsd", candidate.get("amount_usd", 0)))
+    try:
+        amount = float(raw_amount)
+    except (TypeError, ValueError):
+        return math.nan
+    return amount
+
+
+def _validate_decision_item(
+    item: dict[str, Any],
+    packet: dict[str, Any],
+    candidates: dict[str, dict[str, Any]],
+    *,
+    target_additions: dict[str, float],
+    source_redeems: dict[str, float],
+    bucket_used_usd: float,
+    idle_used_usd: float,
+) -> tuple[list[str], dict[str, Any] | None, float, float]:
+    violations: list[str] = []
+    candidate_id = item.get("candidate_id")
     candidate = candidates.get(candidate_id)
     if not candidate:
         violations.append("candidate_id does not exist in packet")
@@ -481,7 +503,7 @@ def validate_decision(decision: dict[str, Any], packet: dict[str, Any]) -> dict[
 
     if candidate:
         candidate_type = candidate.get("type")
-        decision_action = decision.get("action")
+        decision_action = item.get("action")
         if not decision_action:
             violations.append("decision action is required")
         elif decision_action != candidate_type:
@@ -496,17 +518,48 @@ def validate_decision(decision: dict[str, Any], packet: dict[str, Any]) -> dict[
                 violations.append("target vault is not in eligible_vaults")
         source = candidate.get("source_vault_address")
         if source:
-            sources = {_address_key(p.get("vault_address")) for p in packet.get("current_positions", [])}
-            if _address_key(source) not in sources:
+            positions_by_address = {
+                _address_key(p.get("vault_address")): p for p in packet.get("current_positions", [])
+            }
+            source_position = positions_by_address.get(_address_key(source))
+            if source_position is None:
                 violations.append("source vault is not in current_positions")
+        amount = _candidate_amount(candidate, item)
         try:
-            amount = float(candidate.get("amount_usd", 0))
+            candidate_amount = float(candidate.get("amount_usd", 0))
         except (TypeError, ValueError):
-            amount = math.nan
+            candidate_amount = math.nan
         if amount < 0 or not math.isfinite(amount):
             violations.append("candidate amount is invalid")
         elif candidate_type != "hold" and amount <= 0:
             violations.append("candidate amount must be positive")
+        elif math.isfinite(candidate_amount) and amount > candidate_amount + 1e-9:
+            violations.append("decision amount exceeds candidate amount")
+
+        if source and candidate_type in {"rebalance", "partial_rebalance"} and math.isfinite(amount):
+            positions_by_address = {
+                _address_key(p.get("vault_address")): p for p in packet.get("current_positions", [])
+            }
+            source_position = positions_by_address.get(_address_key(source))
+            if source_position is not None and source_position.get("balance_usd") is not None:
+                try:
+                    source_balance = float(source_position.get("balance_usd"))
+                except (TypeError, ValueError):
+                    violations.append("source position balance is invalid")
+                    source_balance = math.nan
+                already_redeemed = source_redeems.get(_address_key(source), 0.0)
+                if math.isfinite(source_balance) and already_redeemed + amount > source_balance + 1e-9:
+                    violations.append("batch redeem amount exceeds source position balance")
+
+        if candidate_type == "deploy_idle" and math.isfinite(amount):
+            try:
+                idle_usd = float(packet.get("idle_assets", {}).get("usdc_balance", 0))
+            except (TypeError, ValueError):
+                violations.append("idle balance is invalid")
+                idle_usd = math.nan
+            if math.isfinite(idle_usd) and idle_used_usd + amount > idle_usd + 1e-9:
+                violations.append("batch deploy amount exceeds idle balance")
+
         bucket = packet.get("constraints", {}).get("preference_bucket")
         if bucket and candidate_type != "hold" and _candidate_increases_bucket_exposure(candidate, bucket):
             try:
@@ -514,7 +567,7 @@ def validate_decision(decision: dict[str, Any], packet: dict[str, Any]) -> dict[
             except (TypeError, ValueError):
                 violations.append("preference bucket remaining deploy capacity is invalid")
                 remaining_bucket_usd = math.nan
-            if math.isfinite(remaining_bucket_usd) and amount > remaining_bucket_usd + 1e-9:
+            if math.isfinite(remaining_bucket_usd) and bucket_used_usd + amount > remaining_bucket_usd + 1e-9:
                 violations.append("candidate exceeds preference bucket remaining deploy capacity")
 
         if target and candidate_type != "hold" and math.isfinite(amount):
@@ -547,11 +600,30 @@ def validate_decision(decision: dict[str, Any], packet: dict[str, Any]) -> dict[
                     target_limits.append(float(max_single))
                 except (TypeError, ValueError):
                     violations.append("max_single_vault_usd is invalid")
-            if target_limits and math.isfinite(target_existing_usd) and target_existing_usd + amount > min(target_limits) + 1e-9:
+            existing_batch_addition = target_additions.get(_address_key(target), 0.0)
+            if (
+                target_limits
+                and math.isfinite(target_existing_usd)
+                and target_existing_usd + existing_batch_addition + amount > min(target_limits) + 1e-9
+            ):
                 violations.append("candidate exceeds target vault allocation cap")
 
         dc = packet.get("constraints", {}).get("decision", {})
         breakeven = candidate.get("breakeven_days")
+        annual_gain = candidate.get("annual_yield_gain_usd", 0)
+        estimated_cost = candidate.get("estimated_cost", {}).get("tx_cost_usd", 0)
+        if (
+            candidate.get("type") != "hold"
+            and math.isfinite(amount)
+            and math.isfinite(candidate_amount)
+            and candidate_amount > 0
+            and abs(amount - candidate_amount) > 1e-9
+        ):
+            try:
+                annual_gain = float(annual_gain) * (amount / candidate_amount)
+                breakeven = _finite_days(float(estimated_cost), annual_gain)
+            except (TypeError, ValueError):
+                pass
         if candidate.get("type") != "hold" and breakeven is not None:
             try:
                 breakeven_value = float(breakeven)
@@ -562,18 +634,83 @@ def validate_decision(decision: dict[str, Any], packet: dict[str, Any]) -> dict[
                 violations.append("breakeven_days exceeds max_breakeven_days")
         if candidate.get("type") != "hold":
             try:
-                net = float(candidate.get("annual_yield_gain_usd", 0)) - float(candidate.get("estimated_cost", {}).get("tx_cost_usd", 0))
+                net = float(annual_gain) - float(estimated_cost)
             except (TypeError, ValueError):
                 violations.append("net expected gain is invalid")
                 net = None
             if net is not None and net < float(dc.get("min_net_gain_usd", 1.0)):
                 violations.append("net expected gain is below min_net_gain_usd")
 
+        if not violations:
+            candidate = {**candidate, "amount_usd": amount}
+            if candidate.get("type") == "deploy_idle":
+                idle_used_usd += amount
+            if source and candidate.get("type") in {"rebalance", "partial_rebalance"}:
+                key = _address_key(source)
+                source_redeems[key] = source_redeems.get(key, 0.0) + amount
+            if target and candidate.get("type") != "hold":
+                key = _address_key(target)
+                target_additions[key] = target_additions.get(key, 0.0) + amount
+            if bucket and candidate.get("type") != "hold" and _candidate_increases_bucket_exposure(candidate, bucket):
+                bucket_used_usd += amount
+
+    return violations, candidate, bucket_used_usd, idle_used_usd
+
+
+def validate_decision(decision: dict[str, Any], packet: dict[str, Any]) -> dict[str, Any]:
+    decision = normalize_decision(decision)
+    violations: list[str] = []
+    if packet.get("schema_version") != PACKET_SCHEMA:
+        violations.append("invalid packet schema_version")
+    if decision.get("schema_version") != DECISION_SCHEMA:
+        violations.append("invalid decision schema_version")
+
+    raw_items = decision.get("actions") if "actions" in decision else decision.get("decisions")
+    if raw_items is not None and not isinstance(raw_items, list):
+        violations.append("decision actions must be a list")
+    items = _decision_items(decision)
+    if raw_items is not None and not items:
+        violations.append("decision actions must contain at least one action")
+
+    candidates = {c["id"]: c for c in packet.get("candidate_actions", [])}
+    validated_items: list[dict[str, Any]] = []
+    target_additions: dict[str, float] = {}
+    source_redeems: dict[str, float] = {}
+    bucket_used_usd = 0.0
+    idle_used_usd = 0.0
+    seen_non_hold: set[str] = set()
+
+    for index, item in enumerate(items):
+        item_violations, candidate, bucket_used_usd, idle_used_usd = _validate_decision_item(
+            item,
+            packet,
+            candidates,
+            target_additions=target_additions,
+            source_redeems=source_redeems,
+            bucket_used_usd=bucket_used_usd,
+            idle_used_usd=idle_used_usd,
+        )
+        if raw_items is None and len(items) == 1:
+            violations.extend(item_violations)
+        else:
+            violations.extend(f"actions[{index}]: {violation}" for violation in item_violations)
+        if candidate:
+            if candidate.get("type") == "hold" and len(items) > 1:
+                violations.append(f"actions[{index}]: hold cannot be combined with other actions")
+            action_key = candidate.get("id")
+            if candidate.get("type") != "hold" and action_key in seen_non_hold:
+                violations.append(f"actions[{index}]: duplicate candidate_id in batch")
+            if candidate.get("type") != "hold" and action_key:
+                seen_non_hold.add(action_key)
+            validated_items.append({"decision": item, "candidate": candidate})
+
+    candidate = validated_items[0]["candidate"] if len(validated_items) == 1 else None
     return {
         "valid": not violations,
         "violations": violations,
         "decision": decision,
         "candidate": candidate,
+        "items": validated_items,
     }
 
 
@@ -581,6 +718,57 @@ def plan_decision(agent, decision: dict[str, Any], packet: dict[str, Any]) -> di
     validation = validate_decision(decision, packet)
     if not validation["valid"]:
         return {"valid": False, "validation": validation, "transactions": [], "status": "invalid"}
+
+    if len(validation.get("items", [])) > 1:
+        transactions: list[dict[str, Any]] = []
+        plans: list[dict[str, Any]] = []
+        idle_usd = float(packet.get("idle_assets", {}).get("usdc_balance", 0))
+        projected_idle_usd = idle_usd
+        for item in validation["items"]:
+            candidate = item["candidate"]
+            action = candidate["type"]
+            if action == "hold":
+                continue
+            amount_usd = float(candidate["amount_usd"])
+            if action == "deploy_idle":
+                plan = agent.prepare_deploy_to_vault(
+                    candidate["target_vault_address"],
+                    amount_usd,
+                    available_usd=projected_idle_usd,
+                )
+                projected_idle_usd -= amount_usd
+                plans.append({"candidate_id": candidate["id"], "type": action, "plan": plan})
+                transactions.extend(plan["transactions"])
+                continue
+            if action in {"rebalance", "partial_rebalance"}:
+                redeem_plan = agent.prepare_redeem_by_vault(candidate["source_vault_address"], amount_usd=amount_usd)
+                projected_idle_usd += amount_usd
+                deploy_plan = agent.prepare_deploy_to_vault(
+                    candidate["target_vault_address"],
+                    amount_usd,
+                    available_usd=projected_idle_usd,
+                )
+                projected_idle_usd -= amount_usd
+                plans.append(
+                    {
+                        "candidate_id": candidate["id"],
+                        "type": action,
+                        "redeem_plan": redeem_plan,
+                        "deploy_plan": deploy_plan,
+                    }
+                )
+                transactions.extend(redeem_plan["transactions"])
+                transactions.extend(deploy_plan["transactions"])
+                continue
+            raise ValueError(f"unsupported candidate action: {action}")
+        return {
+            "valid": True,
+            "validation": validation,
+            "transactions": transactions,
+            "status": "planned" if transactions else "hold",
+            "plans": plans,
+            "action_count": len(plans),
+        }
 
     candidate = validation["candidate"]
     action = candidate["type"]

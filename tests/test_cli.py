@@ -902,3 +902,159 @@ def test_plan_decision_rebalance_uses_projected_available_idle():
     result = plan_decision(FakeAgent(), decision, packet)
     assert result["valid"] is True
     assert result["deploy_plan"]["available_usd"] == 6.0
+
+
+def test_plan_decision_batches_multiple_deploys_with_projected_idle():
+    packet = {
+        "schema_version": "vaultsfyi.decision-packet.v1",
+        "idle_assets": {"usdc_balance": 100.0},
+        "eligible_vaults": [{"vault_address": "0xone"}, {"vault_address": "0xtwo"}],
+        "current_positions": [],
+        "candidate_actions": [
+            {
+                "id": "deploy_idle:0xone:100.000000",
+                "type": "deploy_idle",
+                "target_vault_address": "0xone",
+                "amount_usd": 100.0,
+                "annual_yield_gain_usd": 10.0,
+                "breakeven_days": 1,
+                "estimated_cost": {"tx_cost_usd": 0.0},
+            },
+            {
+                "id": "deploy_idle:0xtwo:100.000000",
+                "type": "deploy_idle",
+                "target_vault_address": "0xtwo",
+                "amount_usd": 100.0,
+                "annual_yield_gain_usd": 10.0,
+                "breakeven_days": 1,
+                "estimated_cost": {"tx_cost_usd": 0.0},
+            },
+        ],
+        "constraints": {"decision": {"min_net_gain_usd": 0, "max_breakeven_days": 30}},
+    }
+    decision = {
+        "schema_version": "vaultsfyi.decision.v1",
+        "actions": [
+            {
+                "candidate_id": "deploy_idle:0xone:100.000000",
+                "action": "deploy_idle",
+                "amount_usd": 40.0,
+            },
+            {
+                "candidate_id": "deploy_idle:0xtwo:100.000000",
+                "action": "deploy_idle",
+                "amount_usd": 60.0,
+            },
+        ],
+    }
+
+    result = plan_decision(FakeAgent(), decision, packet)
+
+    assert result["valid"] is True
+    assert result["status"] == "planned"
+    assert result["action_count"] == 2
+    assert [plan["plan"]["available_usd"] for plan in result["plans"]] == [100.0, 60.0]
+    assert [tx["to"] for tx in result["transactions"]] == ["0xone", "0xtwo"]
+
+
+def test_validate_decision_rejects_batch_deploy_over_idle_balance():
+    packet = {
+        "schema_version": "vaultsfyi.decision-packet.v1",
+        "idle_assets": {"usdc_balance": 100.0},
+        "eligible_vaults": [{"vault_address": "0xone"}, {"vault_address": "0xtwo"}],
+        "current_positions": [],
+        "candidate_actions": [
+            {
+                "id": "deploy_idle:0xone:100.000000",
+                "type": "deploy_idle",
+                "target_vault_address": "0xone",
+                "amount_usd": 100.0,
+                "annual_yield_gain_usd": 10.0,
+                "breakeven_days": 1,
+                "estimated_cost": {"tx_cost_usd": 0.0},
+            },
+            {
+                "id": "deploy_idle:0xtwo:100.000000",
+                "type": "deploy_idle",
+                "target_vault_address": "0xtwo",
+                "amount_usd": 100.0,
+                "annual_yield_gain_usd": 10.0,
+                "breakeven_days": 1,
+                "estimated_cost": {"tx_cost_usd": 0.0},
+            },
+        ],
+        "constraints": {"decision": {"min_net_gain_usd": 0, "max_breakeven_days": 30}},
+    }
+    decision = {
+        "schema_version": "vaultsfyi.decision.v1",
+        "actions": [
+            {
+                "candidate_id": "deploy_idle:0xone:100.000000",
+                "action": "deploy_idle",
+                "amount_usd": 70.0,
+            },
+            {
+                "candidate_id": "deploy_idle:0xtwo:100.000000",
+                "action": "deploy_idle",
+                "amount_usd": 40.0,
+            },
+        ],
+    }
+
+    result = validate_decision(decision, packet)
+
+    assert result["valid"] is False
+    assert "actions[1]: batch deploy amount exceeds idle balance" in result["violations"]
+
+
+def test_validate_decision_rejects_batch_rebalance_over_source_balance():
+    packet = {
+        "schema_version": "vaultsfyi.decision-packet.v1",
+        "idle_assets": {"usdc_balance": 0.0},
+        "eligible_vaults": [{"vault_address": "0xtarget1"}, {"vault_address": "0xtarget2"}],
+        "current_positions": [{"vault_address": "0xsource", "balance_usd": 50.0}],
+        "candidate_actions": [
+            {
+                "id": "partial_rebalance:0xsource:0xtarget1:40.000000",
+                "type": "partial_rebalance",
+                "source_vault_address": "0xsource",
+                "target_vault_address": "0xtarget1",
+                "amount_usd": 40.0,
+                "annual_yield_gain_usd": 10.0,
+                "breakeven_days": 1,
+                "estimated_cost": {"tx_cost_usd": 0.0},
+            },
+            {
+                "id": "partial_rebalance:0xsource:0xtarget2:40.000000",
+                "type": "partial_rebalance",
+                "source_vault_address": "0xsource",
+                "target_vault_address": "0xtarget2",
+                "amount_usd": 40.0,
+                "annual_yield_gain_usd": 10.0,
+                "breakeven_days": 1,
+                "estimated_cost": {"tx_cost_usd": 0.0},
+            },
+        ],
+        "constraints": {"decision": {"min_net_gain_usd": 0, "max_breakeven_days": 30}},
+    }
+    decision = {
+        "schema_version": "vaultsfyi.decision.v1",
+        "actions": [
+            {
+                "candidate_id": "partial_rebalance:0xsource:0xtarget1:40.000000",
+                "action": "partial_rebalance",
+            },
+            {
+                "candidate_id": "partial_rebalance:0xsource:0xtarget2:40.000000",
+                "action": "partial_rebalance",
+            },
+        ],
+    }
+
+    result = validate_decision(decision, packet)
+
+    assert result["valid"] is False
+    assert (
+        "actions[1]: batch redeem amount exceeds source position balance"
+        in result["violations"]
+    )

@@ -15,7 +15,7 @@ The CLI owns:
 The external allocator owns:
 
 - reasoning over the packet
-- choosing one candidate action
+- choosing one candidate action, or a bounded batch of candidate actions
 - explaining the decision
 
 ## Packet
@@ -74,7 +74,8 @@ The CLI emits legal candidate actions:
 }
 ```
 
-The allocator must choose one `candidate_id`. It may not invent an action, address, amount, or transaction.
+The allocator must choose candidate ids from the packet. It may not invent an
+action, address, amount, or transaction.
 
 ## Decision object
 
@@ -101,6 +102,34 @@ For hold:
   "risks": []
 }
 ```
+
+For one approval that covers several actions, use `actions`. Each item still
+references a packet candidate. `amount_usd` may reduce a candidate amount, but
+it may not exceed the candidate amount:
+
+```json
+{
+  "schema_version": "vaultsfyi.decision.v1",
+  "actions": [
+    {
+      "candidate_id": "deploy_idle:0xvaultA:100.000000",
+      "action": "deploy_idle",
+      "amount_usd": 40,
+      "reasoning_summary": "Allocate part of idle USDC to vault A."
+    },
+    {
+      "candidate_id": "partial_rebalance:0xold:0xvaultB:50.000000",
+      "action": "partial_rebalance",
+      "amount_usd": 25,
+      "reasoning_summary": "Move a bounded slice from the old vault to vault B."
+    }
+  ]
+}
+```
+
+Batch validation applies the single-action checks plus aggregate checks for
+idle balance, preference bucket capacity, duplicate candidates, and target-vault
+allocation caps.
 
 ## Validate
 
