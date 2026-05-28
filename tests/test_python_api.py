@@ -90,3 +90,81 @@ def test_prepare_redeem_rejects_ambiguous_nicknames():
 
     with pytest.raises(ValueError, match="ambiguous"):
         agent.prepare_redeem("SameVault", 50)
+
+
+def test_prepare_redeem_leaves_dust_on_full_redemption():
+    class FakeExecutor:
+        def validate_gas_balance(self):
+            return True, ""
+
+    class FakeTransactionAPI:
+        def __init__(self):
+            self.calls = []
+
+        def generate_redeem_tx(
+            self,
+            user_address,
+            vault_address,
+            lp_token_amount,
+            lp_decimals,
+            asset_address,
+            network,
+            is_full_redemption=False,
+        ):
+            self.calls.append(
+                {
+                    "lp_token_amount": lp_token_amount,
+                    "is_full_redemption": is_full_redemption,
+                }
+            )
+            return [{"to": vault_address, "data": "0x", "value": "0"}]
+
+    tx_api = FakeTransactionAPI()
+    agent = Agent.__new__(Agent)
+    agent.executor = FakeExecutor()
+    agent.transaction_api = tx_api
+    agent.wallet = type("Wallet", (), {"address": "0xwallet"})()
+    agent.asset_address = "0xasset"
+    agent.network = "base"
+    agent.redeem_dust_usd = 0.01
+    agent.get_positions = lambda: [
+        {
+            "nickname": "Vault",
+            "vault_name": "Vault",
+            "vault_address": "0xvault",
+            "balance_usd": 100.0,
+            "balance_lp_tokens": 100.0,
+            "lp_decimals": 18,
+        }
+    ]
+
+    plan = agent.prepare_redeem("Vault", 100)
+
+    assert plan["amount_usd"] == pytest.approx(99.99)
+    assert plan["dust_adjusted"] is True
+    assert plan["lp_tokens"] == pytest.approx(99.99)
+    assert tx_api.calls[0]["lp_token_amount"] == pytest.approx(99.99)
+    assert tx_api.calls[0]["is_full_redemption"] is False
+
+
+def test_prepare_redeem_rejects_dust_position():
+    class FakeExecutor:
+        def validate_gas_balance(self):
+            return True, ""
+
+    agent = Agent.__new__(Agent)
+    agent.executor = FakeExecutor()
+    agent.redeem_dust_usd = 0.01
+    agent.get_positions = lambda: [
+        {
+            "nickname": "Dust",
+            "vault_name": "Dust",
+            "vault_address": "0xdust",
+            "balance_usd": 0.009,
+            "balance_lp_tokens": 0.009,
+            "lp_decimals": 18,
+        }
+    ]
+
+    with pytest.raises(ValueError, match="below redeem dust threshold"):
+        agent.prepare_redeem("Dust", 100)

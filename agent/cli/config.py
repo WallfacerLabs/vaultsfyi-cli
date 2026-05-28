@@ -87,6 +87,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "require_confirmation": True,
         "slippage_bps": 50,
         "cooldown_after_tx": "10m",
+        "redeem_dust_usd": 0.01,
     },
     "decision": {
         "min_net_gain_usd": 1.0,
@@ -422,6 +423,9 @@ def agent_config(cfg: dict[str, Any]) -> dict[str, Any]:
             "decimals": int(display.get("decimals", 2)),
             "position_retry_attempts": int(display.get("position_retry_attempts", 3)),
             "position_retry_delay": int(display.get("position_retry_delay", 5)),
+        },
+        "execution": {
+            "redeem_dust_usd": float(cfg.get("execution", {}).get("redeem_dust_usd", 0.01)),
         },
         "vault_whitelist": strategy.get("vault_whitelist", []),
     }

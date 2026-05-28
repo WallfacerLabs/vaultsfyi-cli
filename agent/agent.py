@@ -25,6 +25,9 @@ def format_apy(apy: float) -> str:
     return f"{apy * 100:.2f}%"
 
 
+DEFAULT_REDEEM_DUST_USD = 0.01
+
+
 class Agent:
     """DeFi capital management agent."""
 
@@ -55,6 +58,12 @@ class Agent:
         self.asset_address = self.config["asset_address"]
         self.network = self.config["network"]
         self.min_deposit_usd = self.config["investment"]["min_deposit_usd"]
+        self.redeem_dust_usd = float(
+            self.config.get("execution", {}).get(
+                "redeem_dust_usd",
+                self.config.get("redeem_dust_usd", DEFAULT_REDEEM_DUST_USD),
+            )
+        )
         self.display_decimals = self.config["display"]["decimals"]
         self.retry_attempts = self.config["display"]["position_retry_attempts"]
         self.retry_delay = self.config["display"]["position_retry_delay"]
@@ -234,9 +243,29 @@ class Agent:
             available = ", ".join(p["nickname"] for p in positions) or "none"
             raise ValueError(f"Position '{position_nickname}' not found. Available positions: {available}")
 
-        redeem_lp_tokens = position["balance_lp_tokens"] * (percentage / 100)
-        redeem_amount_usd = position["balance_usd"] * (percentage / 100)
-        is_full_redemption = percentage >= 99.99
+        balance_usd = float(position["balance_usd"])
+        dust_usd = self._redeem_dust_usd()
+        if balance_usd < dust_usd:
+            raise ValueError(
+                f"Position '{position_nickname}' balance {format_usd(balance_usd)} "
+                f"is below redeem dust threshold {format_usd(dust_usd)}"
+            )
+
+        requested_amount_usd = balance_usd * (percentage / 100)
+        redeem_amount_usd = requested_amount_usd
+        dust_adjusted = False
+        if percentage >= 99.99:
+            redeem_amount_usd = max(0.0, balance_usd - dust_usd)
+            dust_adjusted = redeem_amount_usd < requested_amount_usd
+        if redeem_amount_usd < dust_usd:
+            raise ValueError(
+                f"Redeem amount {format_usd(redeem_amount_usd)} is below "
+                f"redeem dust threshold {format_usd(dust_usd)}"
+            )
+
+        effective_percentage = (redeem_amount_usd / balance_usd) * 100
+        redeem_lp_tokens = position["balance_lp_tokens"] * (effective_percentage / 100)
+        is_full_redemption = effective_percentage >= 99.99 and not dust_adjusted
 
         transactions = self.transaction_api.generate_redeem_tx(
             self.wallet.address,
@@ -251,29 +280,59 @@ class Agent:
         return {
             "action": "redeem",
             "wallet": self.wallet.address,
-            "percentage": percentage,
+            "percentage": effective_percentage,
+            "requested_percentage": percentage,
             "position": position,
             "amount_usd": redeem_amount_usd,
+            "requested_amount_usd": requested_amount_usd,
+            "dust_threshold_usd": dust_usd,
+            "dust_adjusted": dust_adjusted,
             "lp_tokens": redeem_lp_tokens,
             "transactions": transactions,
             "transaction_count": len(transactions),
         }
 
-    def prepare_redeem_by_vault(self, vault_address: str, amount_usd: float | None = None, percentage: float | None = None) -> dict:
+    def prepare_redeem_by_vault(
+        self,
+        vault_address: str,
+        amount_usd: float | None = None,
+        percentage: float | None = None,
+    ) -> dict:
         """Build a redemption plan for a specific position vault address."""
         positions = self.get_positions()
         position = next((p for p in positions if p["vault_address"].lower() == vault_address.lower()), None)
         if position is None:
             raise ValueError(f"Position vault '{vault_address}' not found")
 
+        balance_usd = float(position["balance_usd"])
+        dust_usd = self._redeem_dust_usd()
+        if balance_usd < dust_usd:
+            raise ValueError(
+                f"Position vault '{vault_address}' balance {format_usd(balance_usd)} "
+                f"is below redeem dust threshold {format_usd(dust_usd)}"
+            )
+
         if amount_usd is not None:
             if amount_usd <= 0:
                 raise ValueError("Redeem amount must be positive")
-            if amount_usd > position["balance_usd"]:
-                raise ValueError(f"Redeem amount {format_usd(amount_usd)} exceeds position balance {format_usd(position['balance_usd'])}")
-            percentage = (amount_usd / position["balance_usd"]) * 100 if position["balance_usd"] else 0
+            if amount_usd > balance_usd:
+                raise ValueError(
+                    f"Redeem amount {format_usd(amount_usd)} exceeds "
+                    f"position balance {format_usd(balance_usd)}"
+                )
+            if amount_usd >= max(0.0, balance_usd - dust_usd):
+                amount_usd = max(0.0, balance_usd - dust_usd)
+            if amount_usd < dust_usd:
+                raise ValueError(
+                    f"Redeem amount {format_usd(amount_usd)} is below "
+                    f"redeem dust threshold {format_usd(dust_usd)}"
+                )
+            percentage = (amount_usd / balance_usd) * 100 if balance_usd else 0
         percentage = 100.0 if percentage is None else percentage
         return self.prepare_redeem(position["nickname"], percentage)
+
+    def _redeem_dust_usd(self) -> float:
+        return float(getattr(self, "redeem_dust_usd", DEFAULT_REDEEM_DUST_USD))
 
     def execute_redeem_plan(self, plan: dict) -> dict:
         """Broadcast a prepared redemption plan."""

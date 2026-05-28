@@ -1,12 +1,20 @@
 import json
 import os
 
+import pytest
 from typer.testing import CliRunner
 
 from agent.cli import config as config_mod
 from agent.cli.main import app
 from agent.cli.context import CliContext
-from agent.decision import apply_preference, build_candidate_actions, build_decision_packet, plan_decision, preference_bucket_state, validate_decision
+from agent.decision import (
+    apply_preference,
+    build_candidate_actions,
+    build_decision_packet,
+    plan_decision,
+    preference_bucket_state,
+    validate_decision,
+)
 
 runner = CliRunner()
 
@@ -577,6 +585,45 @@ def test_candidate_actions_respect_existing_target_balance_for_max_position_pct(
 
     assert len(rebalances) == 1
     assert rebalances[0]["amount_usd"] == 1.0
+
+
+def test_candidate_actions_ignore_redeem_dust_sources():
+    opportunities = [{"vault_address": "0xTARGET", "vault_name": "Target", "apy": 0.10}]
+    positions = [
+        {
+            "vault_address": "0xDUST",
+            "vault_name": "Dust",
+            "nickname": "dust",
+            "balance_usd": 0.009,
+            "apy": 0.01,
+        },
+        {
+            "vault_address": "0xSOURCE",
+            "vault_name": "Source",
+            "nickname": "src",
+            "balance_usd": 10.0,
+            "apy": 0.01,
+        },
+    ]
+    cfg = {
+        "agent": {},
+        "risk": {},
+        "strategy": {"min_deposit_usd": 0.1},
+        "execution": {"redeem_dust_usd": 0.01},
+        "decision": {
+            "min_apy_improvement": 0.01,
+            "allow_partial_rebalance": False,
+            "min_net_gain_usd": 0,
+        },
+    }
+
+    candidates = build_candidate_actions(
+        FakeAgent(), cfg, opportunities, positions, {"usdc_balance": 0.0}
+    )
+    rebalances = [c for c in candidates if c["type"] == "rebalance"]
+
+    assert [c["source_vault_address"] for c in rebalances] == ["0xSOURCE"]
+    assert rebalances[0]["amount_usd"] == pytest.approx(9.99)
 
 
 def test_preference_bucket_caps_candidates_that_increase_bucket_exposure():

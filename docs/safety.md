@@ -39,6 +39,9 @@ The CLI builds all transactions from vaults.fyi transaction endpoints. If an
 endpoint returns no usable transaction actions, the CLI fails closed instead of
 constructing fallback call data.
 
+Full redeem planning leaves the configured `execution.redeem_dust_usd`
+threshold, default `$0.01`, instead of trying to drain exact dust balances.
+
 ## Confirmation
 
 Live transaction commands require confirmation unless `--yes` is explicitly supplied:

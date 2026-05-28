@@ -290,7 +290,13 @@ def redeem_all(
     def inner(ctx: CliContext):
         agent = ctx.agent()
         positions_data = agent.get_positions()
-        plans = [agent.prepare_redeem(p["nickname"], 100.0) for p in positions_data]
+        dust_usd = agent._redeem_dust_usd()
+        redeemable_positions = [
+            position
+            for position in positions_data
+            if float(position.get("balance_usd", 0)) - dust_usd >= dust_usd
+        ]
+        plans = [agent.prepare_redeem(p["nickname"], 100.0) for p in redeemable_positions]
         if dry_run:
             results = [{**plan, "status": "dry_run"} for plan in plans]
         else:

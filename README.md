@@ -245,6 +245,7 @@ deploy_percent = 10.0
 require_confirmation = true
 slippage_bps = 50 # reserved for transaction endpoint support
 cooldown_after_tx = "10m" # advisory for external schedulers
+redeem_dust_usd = 0.01 # leave/ignore sub-cent dust instead of draining exact max redeemable shares
 
 [decision]
 min_net_gain_usd = 1.0

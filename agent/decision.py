@@ -29,6 +29,8 @@ DEFAULT_DECISION_CONFIG: dict[str, Any] = {
     "redeem_gas_units": 500_000,
 }
 
+DEFAULT_REDEEM_DUST_USD = 0.01
+
 PREFERENCE_KEYS = {
     "network",
     "asset",
@@ -131,6 +133,17 @@ def decision_config(cfg: dict[str, Any]) -> dict[str, Any]:
     merged = deepcopy(DEFAULT_DECISION_CONFIG)
     merged.update(cfg.get("decision", {}))
     return merged
+
+
+def redeem_dust_usd(cfg: dict[str, Any]) -> float:
+    value = cfg.get("execution", {}).get("redeem_dust_usd", DEFAULT_REDEEM_DUST_USD)
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("execution.redeem_dust_usd must be a number") from exc
+    if parsed < 0 or not math.isfinite(parsed):
+        raise ValueError("execution.redeem_dust_usd must be finite and non-negative")
+    return parsed
 
 
 def apply_preference(cfg: dict[str, Any], preference_name: str | None) -> dict[str, Any]:
@@ -288,7 +301,23 @@ def _position_balances_by_address(positions: list[dict]) -> dict[str, float]:
     return balances
 
 
-def build_candidate_actions(agent, cfg: dict[str, Any], opportunities: list[dict], positions: list[dict], idle_assets: dict) -> list[dict]:
+def _redeemable_position_balance(position: dict[str, Any], dust_usd: float) -> float:
+    balance = float(position.get("balance_usd", 0))
+    if balance < dust_usd:
+        return 0.0
+    redeemable = max(0.0, balance - dust_usd)
+    if redeemable < dust_usd:
+        return 0.0
+    return redeemable
+
+
+def build_candidate_actions(
+    agent,
+    cfg: dict[str, Any],
+    opportunities: list[dict],
+    positions: list[dict],
+    idle_assets: dict,
+) -> list[dict]:
     """Build legal action candidates from already-filtered opportunities."""
     dc = decision_config(cfg)
     candidates: list[dict[str, Any]] = [{
@@ -303,6 +332,7 @@ def build_candidate_actions(agent, cfg: dict[str, Any], opportunities: list[dict
 
     idle_usd = float(idle_assets.get("usdc_balance", 0))
     min_deposit = float(cfg.get("strategy", {}).get("min_deposit_usd", 0.10))
+    dust_usd = redeem_dust_usd(cfg)
     max_agent_deploy = cfg.get("agent", {}).get("max_deploy_usd")
     max_position_pct = cfg.get("agent", {}).get("max_position_pct")
     max_single = cfg.get("risk", {}).get("max_single_vault_usd")
@@ -349,7 +379,7 @@ def build_candidate_actions(agent, cfg: dict[str, Any], opportunities: list[dict
         source_address = position["vault_address"]
         source_in_bucket = _address_key(source_address) in bucket_addresses if bucket_state else False
         source_apy = float(position.get("apy", 0))
-        source_balance = float(position.get("balance_usd", 0))
+        source_balance = _redeemable_position_balance(position, dust_usd)
         if source_balance <= 0:
             continue
         for vault in opportunities[:10]:
@@ -742,13 +772,14 @@ def plan_decision(agent, decision: dict[str, Any], packet: dict[str, Any]) -> di
                 continue
             if action in {"rebalance", "partial_rebalance"}:
                 redeem_plan = agent.prepare_redeem_by_vault(candidate["source_vault_address"], amount_usd=amount_usd)
-                projected_idle_usd += amount_usd
+                planned_amount_usd = float(redeem_plan.get("amount_usd", amount_usd))
+                projected_idle_usd += planned_amount_usd
                 deploy_plan = agent.prepare_deploy_to_vault(
                     candidate["target_vault_address"],
-                    amount_usd,
+                    planned_amount_usd,
                     available_usd=projected_idle_usd,
                 )
-                projected_idle_usd -= amount_usd
+                projected_idle_usd -= planned_amount_usd
                 plans.append(
                     {
                         "candidate_id": candidate["id"],
@@ -777,16 +808,23 @@ def plan_decision(agent, decision: dict[str, Any], packet: dict[str, Any]) -> di
 
     if action == "deploy_idle":
         plan = agent.prepare_deploy_to_vault(candidate["target_vault_address"], float(candidate["amount_usd"]))
-        return {"valid": True, "validation": validation, "transactions": plan["transactions"], "status": "planned", "plan": plan}
+        return {
+            "valid": True,
+            "validation": validation,
+            "transactions": plan["transactions"],
+            "status": "planned",
+            "plan": plan,
+        }
 
     if action in {"rebalance", "partial_rebalance"}:
         amount_usd = float(candidate["amount_usd"])
         idle_usd = float(packet.get("idle_assets", {}).get("usdc_balance", 0))
         redeem_plan = agent.prepare_redeem_by_vault(candidate["source_vault_address"], amount_usd=amount_usd)
+        planned_amount_usd = float(redeem_plan.get("amount_usd", amount_usd))
         deploy_plan = agent.prepare_deploy_to_vault(
             candidate["target_vault_address"],
-            amount_usd,
-            available_usd=idle_usd + amount_usd,
+            planned_amount_usd,
+            available_usd=idle_usd + planned_amount_usd,
         )
         transactions = redeem_plan["transactions"] + deploy_plan["transactions"]
         return {
