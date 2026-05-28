@@ -168,3 +168,32 @@ def test_prepare_redeem_rejects_dust_position():
 
     with pytest.raises(ValueError, match="below redeem dust threshold"):
         agent.prepare_redeem("Dust", 100)
+
+
+def test_agent_get_positions_fetches_fresh_idle_reference_each_call():
+    class FakePositionAPI:
+        def __init__(self):
+            self.idle_calls = 0
+            self.position_calls = 0
+
+        def get_idle_assets(self, wallet_address):
+            self.idle_calls += 1
+            return {"usdc_balance": 100 + self.idle_calls, "balance_tokens": 100}
+
+        def get_positions(self, wallet_address, **kwargs):
+            self.position_calls += 1
+            return [{"reference_idle_usd": kwargs["reference_idle_usd"]}]
+
+    position_api = FakePositionAPI()
+    agent = Agent.__new__(Agent)
+    agent.position_api = position_api
+    agent.wallet = type("Wallet", (), {"address": "0xwallet"})()
+    agent.redeem_dust_usd = 0.01
+
+    first = agent.get_positions()
+    second = agent.get_positions()
+
+    assert position_api.idle_calls == 2
+    assert position_api.position_calls == 2
+    assert first[0]["reference_idle_usd"] == 101.0
+    assert second[0]["reference_idle_usd"] == 102.0

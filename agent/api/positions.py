@@ -42,21 +42,15 @@ class PositionAPI:
         }
 
         attempts = max(1, int(consistency_retries) + 1)
-        last_positions: list[dict] = []
-        last_conflicted = False
         for _ in range(attempts):
             response = self.client.make_request(endpoint, params)
             positions, reported_idle_usd = self._parse_positions_response(response, min_balance_usd)
-            last_positions = positions
-            last_conflicted = _idle_snapshot_conflicts(reference_idle_usd, reported_idle_usd, positions)
-            if not last_conflicted:
+            if not _idle_snapshot_conflicts(reference_idle_usd, reported_idle_usd, positions):
                 return positions
 
         # If the positions endpoint keeps returning rows from a different
         # portfolio snapshot than idle-assets, avoid double counting them.
-        if last_conflicted:
-            return []
-        return last_positions
+        return []
 
     def _parse_positions_response(self, response: dict, min_balance_usd: float) -> tuple[list[dict], float | None]:
         """Normalize raw portfolio positions and retain embedded idle USD if present."""
