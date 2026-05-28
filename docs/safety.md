@@ -116,9 +116,8 @@ enforce that separately from chain-broadcast approval.
 
 ## Known limitations
 
-- Cost estimates use configured gas assumptions and ETH/USD price unless richer data is supplied.
+- Cost estimates use vault deposit and withdrawal fees when Vaults.fyi exposes them; gas costs are not decision guardrails.
 - Withdrawability, vault age, and incentive-heavy APY filters depend on vaults.fyi response fields; explicit filters fail closed when required data is absent.
-- Withdrawal fees and protocol cooldowns are not yet modeled in decision costs
-  unless future vault data or transaction endpoint support exposes them.
+- Protocol cooldowns are not yet modeled in decision costs unless future vault data or transaction endpoint support exposes them.
 - `slippage_bps` and `cooldown_after_tx` are configuration placeholders for transaction endpoint support and external scheduler policy.
 - The decision system is conservative by design. Invalid or marginal decisions should become `hold`.

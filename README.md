@@ -254,9 +254,6 @@ min_apy_improvement = 0.01
 max_rebalance_pct = 50
 allow_partial_rebalance = true
 prefer_hold_if_uncertain = true
-eth_usd_price = 3000.0
-deposit_gas_units = 350000
-redeem_gas_units = 500000
 
 [preferences.blue-chip]
 min_tvl = 10000000

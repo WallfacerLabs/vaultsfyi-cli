@@ -23,7 +23,7 @@ Use a prompt like:
 
 ```text
 You are an allocator. Choose exactly one candidate from this vaultsfyi decision packet.
-Optimize net expected yield after gas and churn costs.
+Optimize net expected yield after vault deposit/withdrawal fees and churn costs.
 Prefer hold when benefit is unclear.
 Return only JSON matching vaultsfyi.decision.v1.
 Do not invent vault addresses, amounts, or transactions.

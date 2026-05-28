@@ -11,6 +11,7 @@ from agent.decision import (
     apply_preference,
     build_candidate_actions,
     build_decision_packet,
+    decision_config,
     plan_decision,
     preference_bucket_state,
     validate_decision,
@@ -624,6 +625,106 @@ def test_candidate_actions_ignore_redeem_dust_sources():
 
     assert [c["source_vault_address"] for c in rebalances] == ["0xSOURCE"]
     assert rebalances[0]["amount_usd"] == pytest.approx(9.99)
+
+
+def test_candidate_actions_use_vault_fees_not_gas_for_breakeven():
+    opportunities = [
+        {
+            "vault_address": "0xTARGET",
+            "vault_name": "Target",
+            "apy": 0.10,
+            "deposit_fee": 0.01,
+        }
+    ]
+    positions = [
+        {
+            "vault_address": "0xSOURCE",
+            "vault_name": "Source",
+            "nickname": "src",
+            "balance_usd": 100.0,
+            "apy": 0.02,
+            "withdrawal_fee": 0.005,
+        }
+    ]
+    cfg = {
+        "agent": {},
+        "risk": {},
+        "strategy": {"min_deposit_usd": 0.1},
+        "decision": {
+            "min_apy_improvement": 0.01,
+            "allow_partial_rebalance": False,
+            "min_net_gain_usd": 0,
+            "eth_usd_price": 10_000,
+            "deposit_gas_units": 99_999_999,
+            "redeem_gas_units": 99_999_999,
+        },
+    }
+
+    candidates = build_candidate_actions(
+        FakeAgent(), cfg, opportunities, positions, {"usdc_balance": 0.0}
+    )
+    rebalance = next(c for c in candidates if c["type"] == "rebalance")
+
+    assert rebalance["estimated_cost"] == {
+        "cost_basis": "vault_fees",
+        "deposit_fee_rate": 0.01,
+        "withdrawal_fee_rate": 0.005,
+        "deposit_fee_usd": pytest.approx(0.9999),
+        "withdrawal_fee_usd": pytest.approx(0.49995),
+        "tx_cost_usd": pytest.approx(1.49985),
+    }
+    assert "gas_units" not in rebalance["estimated_cost"]
+    assert rebalance["annual_yield_gain_usd"] == pytest.approx(7.9992)
+    assert rebalance["breakeven_days"] == pytest.approx(68.4375)
+
+
+def test_decision_config_ignores_legacy_gas_fields():
+    cfg = {
+        "decision": {
+            "min_net_gain_usd": 0,
+            "eth_usd_price": 10_000,
+            "deposit_gas_units": 99_999,
+            "redeem_gas_units": 99_999,
+        }
+    }
+
+    resolved = decision_config(cfg)
+
+    assert resolved["min_net_gain_usd"] == 0
+    assert "eth_usd_price" not in resolved
+    assert "deposit_gas_units" not in resolved
+    assert "redeem_gas_units" not in resolved
+
+
+def test_validate_decision_scales_fee_cost_for_partial_candidate_amount():
+    packet = {
+        "schema_version": "vaultsfyi.decision-packet.v1",
+        "idle_assets": {"usdc_balance": 100.0},
+        "eligible_vaults": [{"vault_address": "0xTARGET"}],
+        "current_positions": [],
+        "candidate_actions": [
+            {
+                "id": "deploy_idle:0xTARGET:100.000000",
+                "type": "deploy_idle",
+                "target_vault_address": "0xTARGET",
+                "amount_usd": 100.0,
+                "annual_yield_gain_usd": 20.0,
+                "breakeven_days": 30,
+                "estimated_cost": {"cost_basis": "vault_fees", "tx_cost_usd": 10.0},
+            }
+        ],
+        "constraints": {"decision": {"min_net_gain_usd": 0.5, "max_breakeven_days": 365}},
+    }
+    decision = {
+        "schema_version": "vaultsfyi.decision.v1",
+        "candidate_id": "deploy_idle:0xTARGET:100.000000",
+        "action": "deploy_idle",
+        "amount_usd": 10.0,
+    }
+
+    result = validate_decision(decision, packet)
+
+    assert result["valid"] is True
 
 
 def test_preference_bucket_caps_candidates_that_increase_bucket_exposure():

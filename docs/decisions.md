@@ -204,9 +204,7 @@ min_apy_improvement = 0.01
 max_rebalance_pct = 50
 allow_partial_rebalance = true
 prefer_hold_if_uncertain = true
-eth_usd_price = 3000.0
-deposit_gas_units = 350000
-redeem_gas_units = 500000
 ```
 
-Cost estimates are conservative approximations until richer vault/protocol fee data is available.
+Breakeven and net-gain checks use vault deposit and withdrawal fees when those
+fees are present in Vaults.fyi data. They do not include gas costs.

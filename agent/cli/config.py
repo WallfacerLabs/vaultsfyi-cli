@@ -96,9 +96,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "max_rebalance_pct": 50,
         "allow_partial_rebalance": True,
         "prefer_hold_if_uncertain": True,
-        "eth_usd_price": 3000.0,
-        "deposit_gas_units": 350000,
-        "redeem_gas_units": 500000,
     },
     "preferences": {},
     "display": {

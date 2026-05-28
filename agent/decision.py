@@ -24,9 +24,6 @@ DEFAULT_DECISION_CONFIG: dict[str, Any] = {
     "max_rebalance_pct": 50,
     "allow_partial_rebalance": True,
     "prefer_hold_if_uncertain": True,
-    "eth_usd_price": 3000.0,
-    "deposit_gas_units": 350_000,
-    "redeem_gas_units": 500_000,
 }
 
 DEFAULT_REDEEM_DUST_USD = 0.01
@@ -131,7 +128,9 @@ def write_json(path: Path, data: dict[str, Any]) -> Path:
 
 def decision_config(cfg: dict[str, Any]) -> dict[str, Any]:
     merged = deepcopy(DEFAULT_DECISION_CONFIG)
-    merged.update(cfg.get("decision", {}))
+    for key, value in cfg.get("decision", {}).items():
+        if key in merged:
+            merged[key] = value
     return merged
 
 
@@ -264,22 +263,42 @@ def _finite_days(tx_cost_usd: float, annual_gain_usd: float) -> float | None:
     return tx_cost_usd / (annual_gain_usd / 365)
 
 
-def _cost(action_type: str, cfg: dict[str, Any], gas_price_wei: int | None = None) -> dict[str, Any]:
-    dc = decision_config(cfg)
-    gas_price_wei = gas_price_wei or 100_000_000  # conservative-ish default when RPC gas price is unavailable
-    gas_units = 0
-    if action_type == "deploy_idle":
-        gas_units = int(dc["deposit_gas_units"])
-    elif action_type in {"rebalance", "partial_rebalance"}:
-        gas_units = int(dc["redeem_gas_units"]) + int(dc["deposit_gas_units"])
-    tx_cost_eth = (gas_units * gas_price_wei) / 1e18
-    tx_cost_usd = tx_cost_eth * float(dc["eth_usd_price"])
+def _fee_rate(value: Any) -> float:
+    if value in (None, "", []):
+        return 0.0
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if not math.isfinite(parsed) or parsed < 0:
+        return 0.0
+    return parsed
+
+
+def _vault_fee_cost(
+    action_type: str,
+    amount_usd: float = 0.0,
+    *,
+    target_vault: dict[str, Any] | None = None,
+    source_position: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    deposit_fee_rate = 0.0
+    withdrawal_fee_rate = 0.0
+    if action_type in {"deploy_idle", "rebalance", "partial_rebalance"}:
+        deposit_fee_rate = _fee_rate((target_vault or {}).get("deposit_fee"))
+    if action_type in {"rebalance", "partial_rebalance"}:
+        withdrawal_fee_rate = _fee_rate((source_position or {}).get("withdrawal_fee"))
+
+    deposit_fee_usd = amount_usd * deposit_fee_rate
+    withdrawal_fee_usd = amount_usd * withdrawal_fee_rate
+    total_fee_usd = deposit_fee_usd + withdrawal_fee_usd
     return {
-        "gas_units": gas_units,
-        "gas_price_wei": gas_price_wei,
-        "tx_cost_eth": tx_cost_eth,
-        "tx_cost_usd": tx_cost_usd,
-        "eth_usd_price": float(dc["eth_usd_price"]),
+        "cost_basis": "vault_fees",
+        "deposit_fee_rate": deposit_fee_rate,
+        "withdrawal_fee_rate": withdrawal_fee_rate,
+        "deposit_fee_usd": deposit_fee_usd,
+        "withdrawal_fee_usd": withdrawal_fee_usd,
+        "tx_cost_usd": total_fee_usd,
     }
 
 
@@ -327,7 +346,7 @@ def build_candidate_actions(
         "amount_usd": 0,
         "annual_yield_gain_usd": 0,
         "breakeven_days": None,
-        "estimated_cost": _cost("hold", cfg),
+        "estimated_cost": _vault_fee_cost("hold"),
     }]
 
     idle_usd = float(idle_assets.get("usdc_balance", 0))
@@ -356,7 +375,7 @@ def build_candidate_actions(
         if not vault_address or _address_key(vault_address) in existing_vault_addresses:
             continue
         if deploy_amount >= min_deposit:
-            c = _cost("deploy_idle", cfg)
+            c = _vault_fee_cost("deploy_idle", deploy_amount, target_vault=vault)
             annual_gain = deploy_amount * float(vault.get("apy", 0))
             breakeven = _finite_days(c["tx_cost_usd"], annual_gain)
             candidates.append({
@@ -430,7 +449,12 @@ def build_candidate_actions(
             for action_type, amount in amounts:
                 if amount < min_deposit:
                     continue
-                c = _cost(action_type, cfg)
+                c = _vault_fee_cost(
+                    action_type,
+                    amount,
+                    target_vault=vault,
+                    source_position=position,
+                )
                 annual_gain = amount * apy_delta
                 breakeven = _finite_days(c["tx_cost_usd"], annual_gain)
                 candidates.append({
@@ -650,7 +674,9 @@ def _validate_decision_item(
             and abs(amount - candidate_amount) > 1e-9
         ):
             try:
-                annual_gain = float(annual_gain) * (amount / candidate_amount)
+                amount_ratio = amount / candidate_amount
+                annual_gain = float(annual_gain) * amount_ratio
+                estimated_cost = float(estimated_cost) * amount_ratio
                 breakeven = _finite_days(float(estimated_cost), annual_gain)
             except (TypeError, ValueError):
                 pass

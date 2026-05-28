@@ -105,9 +105,6 @@ class Agent:
         """Validate and build a deployment plan without broadcasting."""
         if percentage <= 0 or percentage > 100:
             raise ValueError("Deploy percentage must be greater than 0 and at most 100")
-        is_sufficient, error_msg = self.executor.validate_gas_balance()
-        if not is_sufficient:
-            raise ValueError(error_msg)
 
         idle_info = self.get_idle_assets()
         idle_usdc = idle_info["usdc_balance"]
@@ -170,10 +167,6 @@ class Agent:
         amount_tokens: float | None = None,
     ) -> dict:
         """Build a deployment plan to a specific validated vault address."""
-        is_sufficient, error_msg = self.executor.validate_gas_balance()
-        if not is_sufficient:
-            raise ValueError(error_msg)
-
         idle_info = self.get_idle_assets()
         idle_usdc = float(idle_info["usdc_balance"])
         available_balance = idle_usdc if available_usd is None else float(available_usd)
@@ -229,9 +222,6 @@ class Agent:
         """Validate and build a redemption plan without broadcasting."""
         if percentage <= 0 or percentage > 100:
             raise ValueError("Redeem percentage must be greater than 0 and at most 100")
-        is_sufficient, error_msg = self.executor.validate_gas_balance()
-        if not is_sufficient:
-            raise ValueError(error_msg)
 
         positions = self.get_positions()
         matches = [p for p in positions if p["nickname"] == position_nickname]
