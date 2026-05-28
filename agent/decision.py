@@ -257,6 +257,17 @@ def preference_bucket_state(
     }
 
 
+def portfolio_summary(idle_assets: dict, positions: list[dict]) -> dict[str, float]:
+    """Return the fresh portfolio basis used for percentage caps."""
+    idle_usd = float(idle_assets.get("usdc_balance", 0))
+    positions_usd = sum(float(position.get("balance_usd", 0)) for position in positions)
+    return {
+        "idle_usd": idle_usd,
+        "positions_usd": positions_usd,
+        "total_usd": idle_usd + positions_usd,
+    }
+
+
 def _finite_days(tx_cost_usd: float, annual_gain_usd: float) -> float | None:
     if annual_gain_usd <= 0:
         return None
@@ -487,6 +498,7 @@ def build_decision_packet(agent, cfg: dict[str, Any], preference_name: str | Non
         if "reference_idle_usd" not in str(exc):
             raise
         positions = agent.get_positions()
+    portfolio = portfolio_summary(idle, positions)
     opportunities = agent.get_opportunities()
     candidates = build_candidate_actions(agent, resolved_cfg, opportunities, positions, idle)
     bucket_state = preference_bucket_state(resolved_cfg, opportunities, positions, idle)
@@ -498,6 +510,7 @@ def build_decision_packet(agent, cfg: dict[str, Any], preference_name: str | Non
         "intent": intent or "optimize net yield without excessive churn",
         "idle_assets": idle,
         "current_positions": positions,
+        "portfolio": portfolio,
         "eligible_vaults": opportunities,
         "candidate_actions": candidates,
         "constraints": {
