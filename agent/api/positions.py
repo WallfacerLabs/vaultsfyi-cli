@@ -3,7 +3,11 @@ Position management API
 Query user's current positions and idle assets
 """
 
-from typing import List
+import math
+from typing import Any, List
+
+
+DEFAULT_POSITION_DUST_USD = 0.01
 
 
 def generate_nickname(vault_name: str) -> str:
@@ -18,7 +22,14 @@ class PositionAPI:
         """Initialize with x402 client"""
         self.client = client
 
-    def get_positions(self, wallet_address: str) -> List[dict]:
+    def get_positions(
+        self,
+        wallet_address: str,
+        *,
+        min_balance_usd: float = DEFAULT_POSITION_DUST_USD,
+        reference_idle_usd: float | None = None,
+        consistency_retries: int = 2,
+    ) -> List[dict]:
         """
         Get user's vault positions
         Filters out zero-balance positions (requirement Q12)
@@ -30,19 +41,45 @@ class PositionAPI:
             'allowedAssets': 'USDC'
         }
 
-        response = self.client.make_request(endpoint, params)
+        attempts = max(1, int(consistency_retries) + 1)
+        last_positions: list[dict] = []
+        last_conflicted = False
+        for _ in range(attempts):
+            response = self.client.make_request(endpoint, params)
+            positions, reported_idle_usd = self._parse_positions_response(response, min_balance_usd)
+            last_positions = positions
+            last_conflicted = _idle_snapshot_conflicts(reference_idle_usd, reported_idle_usd, positions)
+            if not last_conflicted:
+                return positions
+
+        # If the positions endpoint keeps returning rows from a different
+        # portfolio snapshot than idle-assets, avoid double counting them.
+        if last_conflicted:
+            return []
+        return last_positions
+
+    def _parse_positions_response(self, response: dict, min_balance_usd: float) -> tuple[list[dict], float | None]:
+        """Normalize raw portfolio positions and retain embedded idle USD if present."""
+        dust_usd = max(0.0, float(min_balance_usd))
 
         # Parse positions (API returns in 'data' array)
         positions = []
+        reported_idle_values = []
         for position in response.get('data', []):
             # Get lpToken info (this is the vault token, represents the position value)
             lp_token = position.get('lpToken', {})
-            balance_usd = float(lp_token.get('balanceUsd', 0))
-            balance_native_lp = float(lp_token.get('balanceNative', 0))
-            lp_decimals = int(lp_token.get('decimals', 18))
+            balance_usd = _safe_float(lp_token.get('balanceUsd'), 0.0)
+            balance_native_lp = _safe_float(lp_token.get('balanceNative'), 0.0)
+            lp_decimals = int(lp_token.get('decimals') or 18)
 
-            # Filter out zero-balance positions (Q12)
-            if balance_usd <= 0:
+            raw_asset = position.get('asset', {})
+            raw_asset = raw_asset if isinstance(raw_asset, dict) else {}
+            reported_idle_usd = _safe_float(raw_asset.get('balanceUsd'), math.nan)
+            if math.isfinite(reported_idle_usd):
+                reported_idle_values.append(reported_idle_usd)
+
+            # Filter out zero and dust positions (Q12 plus execution dust guard).
+            if balance_usd < dust_usd:
                 continue
 
             # Generate nickname (Q10)
@@ -74,7 +111,8 @@ class PositionAPI:
                 'network': network.get('name'),
             })
 
-        return positions
+        reported_idle_usd = max(reported_idle_values) if reported_idle_values else None
+        return positions, reported_idle_usd
 
     def get_idle_assets(self, wallet_address: str) -> dict:
         """Get user's idle USDC balance"""
@@ -104,3 +142,32 @@ class PositionAPI:
             'usdc_balance': 0.0,
             'balance_tokens': 0.0,
         }
+
+
+def _safe_float(value: Any, default: float) -> float:
+    if value in (None, "", []):
+        return default
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if math.isfinite(parsed) else default
+
+
+def _idle_snapshot_conflicts(
+    reference_idle_usd: float | None,
+    reported_idle_usd: float | None,
+    positions: list[dict],
+) -> bool:
+    if not positions or reference_idle_usd is None:
+        return False
+    try:
+        reference = float(reference_idle_usd)
+    except (TypeError, ValueError):
+        return False
+    if not math.isfinite(reference):
+        return False
+    if reported_idle_usd is None:
+        return False
+    tolerance = max(DEFAULT_POSITION_DUST_USD, abs(reference) * 0.005)
+    return abs(float(reported_idle_usd) - reference) > tolerance

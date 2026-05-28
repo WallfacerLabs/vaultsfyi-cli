@@ -76,9 +76,18 @@ class Agent:
         """Return idle USDC balance info."""
         return self.position_api.get_idle_assets(self.wallet.address)
 
-    def get_positions(self) -> List[dict]:
+    def get_positions(self, reference_idle_usd: float | None = None) -> List[dict]:
         """Return active positions."""
-        return self.position_api.get_positions(self.wallet.address)
+        if reference_idle_usd is None:
+            try:
+                reference_idle_usd = float(self.get_idle_assets().get("usdc_balance", 0))
+            except Exception:
+                reference_idle_usd = None
+        return self.position_api.get_positions(
+            self.wallet.address,
+            min_balance_usd=self._redeem_dust_usd(),
+            reference_idle_usd=reference_idle_usd,
+        )
 
     def get_opportunities(self) -> List[dict]:
         """Return filtered deposit opportunities."""
@@ -91,7 +100,7 @@ class Agent:
         """Return gas, idle asset, and position summary."""
         gas_info = self.executor.check_gas_balance()
         idle_info = self.get_idle_assets()
-        positions = self.get_positions()
+        positions = self.get_positions(reference_idle_usd=float(idle_info.get("usdc_balance", 0)))
         return {
             "wallet": self.wallet.address,
             "network": self.network,

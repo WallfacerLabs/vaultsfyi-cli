@@ -2,6 +2,7 @@ import pytest
 
 from agent.api.client import X402Client
 from agent.api.opportunities import OpportunityAPI
+from agent.api.positions import PositionAPI
 from agent.api.transactions import TransactionAPI
 from agent.core.executor import TransactionExecutor
 from agent.api.v2 import query_params
@@ -18,6 +19,74 @@ class FakeClient:
         self.last_endpoint = endpoint
         self.last_params = params
         return self.response
+
+
+class SequenceFakeClient:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    def make_request(self, endpoint, params=None):
+        self.calls.append((endpoint, params))
+        if len(self.responses) > 1:
+            return self.responses.pop(0)
+        return self.responses[0]
+
+
+def _position_response(balance_usd, *, asset_balance_usd="59.96", balance_native="1000000"):
+    return {
+        "data": [
+            {
+                "address": "0xvault",
+                "name": "Vault",
+                "network": {"name": "base"},
+                "asset": {"symbol": "USDC", "balanceUsd": asset_balance_usd},
+                "apy": {"total": 0.05},
+                "lpToken": {
+                    "balanceUsd": str(balance_usd),
+                    "balanceNative": str(balance_native),
+                    "decimals": 6,
+                },
+            }
+        ]
+    }
+
+
+def test_positions_ignore_dust_balances():
+    positions = PositionAPI(FakeClient(_position_response("0.009"))).get_positions(
+        "0xwallet",
+        min_balance_usd=0.01,
+    )
+
+    assert positions == []
+
+
+def test_positions_retry_stale_snapshot_against_reference_idle():
+    stale = _position_response("35.98", asset_balance_usd="21.59")
+    current = _position_response("0", asset_balance_usd="59.96")
+    client = SequenceFakeClient([stale, current])
+
+    positions = PositionAPI(client).get_positions(
+        "0xwallet",
+        reference_idle_usd=59.96,
+        min_balance_usd=0.01,
+    )
+
+    assert positions == []
+    assert len(client.calls) == 2
+
+
+def test_positions_keep_consistent_snapshot_with_reference_idle():
+    client = SequenceFakeClient([_position_response("10", asset_balance_usd="59.96")])
+
+    positions = PositionAPI(client).get_positions(
+        "0xwallet",
+        reference_idle_usd=59.96,
+        min_balance_usd=0.01,
+    )
+
+    assert len(positions) == 1
+    assert positions[0]["balance_usd"] == 10.0
 
 
 def test_opportunities_prefer_configured_apy_interval_then_fallback_to_total():

@@ -481,7 +481,12 @@ def build_decision_packet(agent, cfg: dict[str, Any], preference_name: str | Non
     resolved_cfg = apply_preference(cfg, preference_name)
     # Agent already owns clients; update its config criteria by reconstructing in CLI caller when preference is active.
     idle = agent.get_idle_assets()
-    positions = agent.get_positions()
+    try:
+        positions = agent.get_positions(reference_idle_usd=float(idle.get("usdc_balance", 0)))
+    except TypeError as exc:
+        if "reference_idle_usd" not in str(exc):
+            raise
+        positions = agent.get_positions()
     opportunities = agent.get_opportunities()
     candidates = build_candidate_actions(agent, resolved_cfg, opportunities, positions, idle)
     bucket_state = preference_bucket_state(resolved_cfg, opportunities, positions, idle)
