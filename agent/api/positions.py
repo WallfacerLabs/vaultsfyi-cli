@@ -42,14 +42,21 @@ class PositionAPI:
         }
 
         attempts = max(1, int(consistency_retries) + 1)
-        for _ in range(attempts):
+        for attempt in range(attempts):
             response = self.client.make_request(endpoint, params)
             positions, reported_idle_usd = self._parse_positions_response(response, min_balance_usd)
+            if (
+                reference_idle_usd is not None
+                and not positions
+                and attempt < attempts - 1
+            ):
+                continue
             if not _idle_snapshot_conflicts(reference_idle_usd, reported_idle_usd, positions):
                 return positions
 
         # If the positions endpoint keeps returning rows from a different
-        # portfolio snapshot than idle-assets, avoid double counting them.
+        # portfolio snapshot than idle-assets, or repeatedly returns empty
+        # during indexing lag, avoid double counting or inventing positions.
         return []
 
     def _parse_positions_response(self, response: dict, min_balance_usd: float) -> tuple[list[dict], float | None]:

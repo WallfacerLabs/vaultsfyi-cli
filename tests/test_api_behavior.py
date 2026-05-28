@@ -73,6 +73,22 @@ def test_positions_retry_stale_snapshot_against_reference_idle():
     )
 
     assert positions == []
+    assert len(client.calls) == 3
+
+
+def test_positions_retry_empty_snapshot_against_reference_idle():
+    empty = {"data": []}
+    current = _position_response("10", asset_balance_usd="59.96")
+    client = SequenceFakeClient([empty, current])
+
+    positions = PositionAPI(client).get_positions(
+        "0xwallet",
+        reference_idle_usd=59.96,
+        min_balance_usd=0.01,
+    )
+
+    assert len(positions) == 1
+    assert positions[0]["balance_usd"] == 10.0
     assert len(client.calls) == 2
 
 
