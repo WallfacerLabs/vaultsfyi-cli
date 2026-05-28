@@ -17,7 +17,7 @@ from typer.main import get_command
 
 from agent.cli.api import api_app
 from agent.cli import config as config_mod
-from agent.cli.context import CliContext, build_context
+from agent.cli.context import CliContext, build_context, current_context, set_current_context
 from agent.cli.output import OutputFormat, confirm_or_abort, echo_error, echo_json, format_apy, format_usd, print_table
 from agent.decision import (
     build_decision_packet,
@@ -42,8 +42,13 @@ app.add_typer(api_app, name="api")
 
 
 def _ctx() -> CliContext:
-    ctx = click.get_current_context()
-    return ctx.obj
+    ctx = click.get_current_context(silent=True)
+    if ctx is not None and ctx.obj is not None:
+        return ctx.obj
+    stored = current_context()
+    if stored is None:
+        raise RuntimeError("vaultsfyi CLI context was not initialized")
+    return stored
 
 
 @app.callback(invoke_without_command=True)
@@ -55,6 +60,7 @@ def callback(
 ):
     """Command-line DeFi vault manager powered by vaults.fyi."""
     ctx.obj = build_context(output, config, agent)
+    set_current_context(ctx.obj)
     if ctx.invoked_subcommand is None:
         typer.echo(ctx.get_help())
 

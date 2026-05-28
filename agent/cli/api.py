@@ -9,7 +9,7 @@ import click
 import typer
 
 from agent.api.v2 import path_value
-from agent.cli.context import CliContext
+from agent.cli.context import CliContext, current_context
 from agent.cli.output import OutputFormat, echo_error, echo_json, print_table
 
 
@@ -36,7 +36,13 @@ api_app.add_typer(nrt_app, name="nrt")
 
 
 def _ctx() -> CliContext:
-    return click.get_current_context().obj
+    ctx = click.get_current_context(silent=True)
+    if ctx is not None and ctx.obj is not None:
+        return ctx.obj
+    stored = current_context()
+    if stored is None:
+        raise RuntimeError("vaultsfyi CLI context was not initialized")
+    return stored
 
 
 def _run(fn):

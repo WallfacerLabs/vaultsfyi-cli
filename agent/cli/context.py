@@ -13,6 +13,9 @@ from agent.cli.output import OutputFormat
 from agent.decision import apply_preference
 
 
+_CURRENT_CONTEXT: "CliContext | None" = None
+
+
 @dataclass
 class ContextApiClient:
     cfg: dict
@@ -51,3 +54,12 @@ class CliContext:
 def build_context(output: OutputFormat, config_path: Path | None, agent_name: str | None = None) -> CliContext:
     cfg = config_mod.load_config(config_path, agent_name)
     return CliContext(output=output, config_path=config_path, agent_name=agent_name, cfg=cfg)
+
+
+def set_current_context(ctx: CliContext) -> None:
+    global _CURRENT_CONTEXT
+    _CURRENT_CONTEXT = ctx
+
+
+def current_context() -> CliContext | None:
+    return _CURRENT_CONTEXT
