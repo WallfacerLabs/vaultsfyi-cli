@@ -130,6 +130,10 @@ PREFERENCE_NUMERIC_FIELDS = {
     "bucket_tolerance_pct",
     "max_deploy_usd",
     "max_position_pct",
+    "min_net_gain_usd",
+    "max_breakeven_days",
+    "min_apy_improvement",
+    "max_rebalance_pct",
 }
 
 PREFERENCE_BOOL_FIELDS = {
@@ -140,6 +144,8 @@ PREFERENCE_BOOL_FIELDS = {
     "only_app_featured",
     "allow_corrupted",
     "allow_vaults_with_warnings",
+    "allow_partial_rebalance",
+    "prefer_hold_if_uncertain",
 }
 
 PREFERENCE_LIST_FIELDS = {
@@ -470,6 +476,9 @@ def exported_env(cfg: dict[str, Any]):
 
 def set_config_value(cfg: dict[str, Any], dotted_key: str, value: Any) -> None:
     parts = dotted_key.split(".")
+    if len(parts) == 1 and dotted_key in DEFAULT_CONFIG["decision"]:
+        cfg.setdefault("decision", {})[dotted_key] = value
+        return
     if len(parts) != 2:
         raise ValueError("config key must look like section.name, e.g. wallet.name")
     section, key = parts

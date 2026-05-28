@@ -73,6 +73,8 @@ PREFERENCE_AGENT_KEYS = {
     "max_position_pct",
 }
 
+PREFERENCE_DECISION_KEYS = set(DEFAULT_DECISION_CONFIG)
+
 PREFERENCE_KEY_ALIASES = {
     "blocked_protocols": "disallowed_protocols",
     "allowed_curators": "curators",
@@ -128,6 +130,10 @@ def write_json(path: Path, data: dict[str, Any]) -> Path:
 
 def decision_config(cfg: dict[str, Any]) -> dict[str, Any]:
     merged = deepcopy(DEFAULT_DECISION_CONFIG)
+    for section in ("agent", "strategy"):
+        for key, value in cfg.get(section, {}).items():
+            if key in merged:
+                merged[key] = value
     for key, value in cfg.get("decision", {}).items():
         if key in merged:
             merged[key] = value
@@ -162,6 +168,8 @@ def apply_preference(cfg: dict[str, Any], preference_name: str | None) -> dict[s
             resolved.setdefault("strategy", {})[target_key] = value
         elif key in PREFERENCE_AGENT_KEYS:
             resolved.setdefault("agent", {})[key] = value
+        elif key in PREFERENCE_DECISION_KEYS:
+            resolved.setdefault("decision", {})[key] = value
     resolved.setdefault("active_preference", {})["name"] = preference_name
     resolved["active_preference"]["filters"] = preference
     return resolved

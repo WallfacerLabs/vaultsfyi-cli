@@ -696,6 +696,45 @@ def test_decision_config_ignores_legacy_gas_fields():
     assert "redeem_gas_units" not in resolved
 
 
+def test_decision_config_honors_legacy_agent_strategy_thresholds():
+    cfg = {
+        "agent": {"min_net_gain_usd": 0.3},
+        "strategy": {"max_breakeven_days": 120},
+    }
+
+    resolved = decision_config(cfg)
+
+    assert resolved["min_net_gain_usd"] == 0.3
+    assert resolved["max_breakeven_days"] == 120
+
+
+def test_preference_can_override_decision_thresholds():
+    cfg = {
+        "decision": {"min_net_gain_usd": 1.0, "max_breakeven_days": 30},
+        "preferences": {
+            "small-bucket": {
+                "min_net_gain_usd": 0.3,
+                "max_breakeven_days": 120,
+            }
+        },
+    }
+
+    resolved = decision_config(apply_preference(cfg, "small-bucket"))
+
+    assert resolved["min_net_gain_usd"] == 0.3
+    assert resolved["max_breakeven_days"] == 120
+
+
+def test_config_set_accepts_decision_threshold_shorthand(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    result = runner.invoke(app, ["-o", "json", "config", "set", "min_net_gain_usd", "0.3"])
+
+    assert result.exit_code == 0
+    cfg = config_mod.load_config()
+    assert cfg["decision"]["min_net_gain_usd"] == 0.3
+
+
 def test_validate_decision_scales_fee_cost_for_partial_candidate_amount():
     packet = {
         "schema_version": "vaultsfyi.decision-packet.v1",
